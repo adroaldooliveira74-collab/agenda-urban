@@ -4,7 +4,7 @@ const path = require('node:path');
 const { db } = require('./db');
 const { digits, fmtData, fmtMoeda } = require('./util');
 
-const APP_URL = () => (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+const APP_URL = () => (process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000').replace(/\/$/, '');
 const caminho = (rel) => path.join(require('./db').DATA_DIR, rel);
 
 let transporter = null;

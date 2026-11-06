@@ -1,0 +1,25 @@
+# Configuração de deploy no Render (https://render.com) — plano gratuito, para testes.
+# No plano gratuito o disco é temporário: o banco SQLite e os PDFs são recriados
+# a cada reinício (com os dados de demonstração). Para uso real, mude para um plano
+# pago e adicione um disco persistente montado em /var/data (DATA_DIR=/var/data).
+services:
+  - type: web
+    name: urbanclin-agenda
+    runtime: node
+    plan: free
+    region: virginia
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22.13.1"
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SEED_DEMO
+        value: "true"
+      - key: ALERTAS_INTERVALO_MIN
+        value: "15"

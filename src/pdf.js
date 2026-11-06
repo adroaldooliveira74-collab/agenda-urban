@@ -14,7 +14,7 @@ const CINZA = '#555555';
 const LOGO = path.join(__dirname, '..', 'public', 'img', 'logo.png');
 const temLogo = fs.existsSync(LOGO);
 const VERMELHO = '#c62828';
-const APP_URL = () => (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+const APP_URL = () => (process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000').replace(/\/$/, '');
 
 function novoDoc(titulo) {
   return new PDFDocument({ size: 'A4', margin: 40, info: { Title: titulo, Author: 'UrbanClin' } });

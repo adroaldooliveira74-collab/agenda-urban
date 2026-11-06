@@ -28,10 +28,13 @@ function autenticar(req, _res, next) {
   try {
     const payload = jwt.verify(token, SECRET);
     const u = db
-      .prepare('SELECT id, nome, email, perfil, empresa_id, clinica_id, medico_id, ativo FROM usuarios WHERE id = ?')
+      .prepare('SELECT id, nome, email, login, perfil, empresa_id, clinica_id, medico_id, ativo, trocar_senha FROM usuarios WHERE id = ?')
       .get(payload.id);
     if (!u || !u.ativo) return next(httpError(401, 'Usuário inativo ou inexistente'));
     req.user = u;
+    // Primeiro acesso: só é possível ver o próprio cadastro e trocar a senha inicial
+    const livre = /^\/api\/auth\/(me|senha)(\?|$)/.test(req.originalUrl);
+    if (u.trocar_senha && !livre) return next(httpError(403, 'Troque a senha inicial para continuar'));
     next();
   } catch {
     next(httpError(401, 'Sessão expirada. Entre novamente.'));

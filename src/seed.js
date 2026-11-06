@@ -82,11 +82,9 @@ function semearDemo() {
     .run(cnpjValido('778889990001'), 'Logística Rápida S.A.', 'Juliana Costa', '(11) 97777-2000', 'sesmt@lograpida.com.br').lastInsertRowid);
 
   const usuario = db.prepare('INSERT INTO usuarios (nome, email, senha_hash, perfil, empresa_id, clinica_id, medico_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
-  usuario.run('Administrador', 'admin@urbanclin.com.br', hashSenha('admin123'), 'admin', null, null, null);
+  // Administrador (e-mail da consultoria) e empresas (CNPJ/CPF) são criados em garantirAcessos()
   usuario.run('Recepção Centro', 'clinica@urbanclin.com.br', hashSenha('clinica123'), 'clinica', null, cl1, null);
   usuario.run('Dra. Helena Martins', 'medico@urbanclin.com.br', hashSenha('medico123'), 'medico', null, cl1, m1);
-  usuario.run('Marcos Pereira', 'empresa@horizonte.com.br', hashSenha('empresa123'), 'empresa', e1, null, null);
-  usuario.run('Juliana Costa', 'empresa@lograpida.com.br', hashSenha('empresa123'), 'empresa', e2, null, null);
 
   // Riscos por função (PGR) de demonstração; funções sem cadastro saem em branco
   const { salvarRiscoFuncao } = require('./services');
@@ -144,17 +142,23 @@ function seed({ demo = true } = {}) {
     const temUsuarios = db.prepare('SELECT COUNT(*) n FROM usuarios').get().n > 0;
     if (temUsuarios) return false;
     if (demo) semearDemo();
-    else {
-      db.prepare("INSERT INTO usuarios (nome, email, senha_hash, perfil) VALUES ('Administrador', ?, ?, 'admin')")
-        .run(process.env.ADMIN_EMAIL || 'admin@urbanclin.com.br', hashSenha(process.env.ADMIN_SENHA || 'admin123'));
-    }
     return true;
   });
 }
 
-module.exports = { seed, cpfValido, cnpjValido };
+/** Admin da consultoria e login por CNPJ/CPF para todas as empresas (roda a cada partida). */
+function garantirAcessos() {
+  const S = require('./services');
+  tx(() => {
+    S.garantirAdminConsultoria();
+    for (const e of db.prepare('SELECT id FROM empresas').all()) S.garantirAcessoEmpresa(e.id);
+  });
+}
+
+module.exports = { seed, garantirAcessos, cpfValido, cnpjValido };
 
 if (require.main === module) {
   const criado = seed({ demo: process.env.SEED_DEMO !== 'false' });
+  garantirAcessos();
   console.log(criado ? 'Banco populado com dados iniciais.' : 'Banco já possui usuários; nada foi alterado.');
 }

@@ -2,7 +2,7 @@
 const express = require('express');
 const { db, getConfig, setConfig } = require('../db');
 const { autenticar, perfil, hashSenha } = require('../auth');
-const { h, httpError, digits, validaCNPJ, hoje, addDias, pick, exigir } = require('../util');
+const { h, httpError, digits, validaCNPJ, validaDocumento, hoje, addDias, pick, exigir } = require('../util');
 
 const router = express.Router();
 router.use(autenticar, perfil('admin'));
@@ -11,14 +11,15 @@ router.use(autenticar, perfil('admin'));
 /* CRUD genérico                                                        */
 /* ------------------------------------------------------------------ */
 
-function crud(rota, tabela, campos, { obrigatorios = [], normalizar = (d) => d, ordem = 'id DESC' } = {}) {
-  router.get(`/${rota}`, h((req, res) => res.json(db.prepare(`SELECT * FROM ${tabela} ORDER BY ${ordem}`).all())));
+function crud(rota, tabela, campos, { obrigatorios = [], normalizar = (d) => d, ordem = 'id DESC', listar, depoisCriar } = {}) {
+  router.get(`/${rota}`, h((req, res) => res.json(db.prepare(listar || `SELECT * FROM ${tabela} ORDER BY ${ordem}`).all())));
 
   router.post(`/${rota}`, h((req, res) => {
     const dados = normalizar(pick(req.body || {}, campos), true);
     exigir(dados, obrigatorios);
     const cols = Object.keys(dados);
     const r = db.prepare(`INSERT INTO ${tabela} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...cols.map((c) => dados[c]));
+    if (depoisCriar) depoisCriar(Number(r.lastInsertRowid));
     res.status(201).json(db.prepare(`SELECT * FROM ${tabela} WHERE id = ?`).get(r.lastInsertRowid));
   }));
 
@@ -36,15 +37,27 @@ function crud(rota, tabela, campos, { obrigatorios = [], normalizar = (d) => d, 
 
 crud('empresas', 'empresas', ['cnpj', 'razao_social', 'responsavel', 'telefone', 'email', 'ativo'], {
   obrigatorios: ['cnpj', 'razao_social', 'responsavel', 'telefone', 'email'],
-  ordem: 'razao_social',
+  listar: `SELECT e.*, u.login AS acesso_login, u.trocar_senha AS acesso_pendente, u.ativo AS acesso_ativo
+           FROM empresas e LEFT JOIN usuarios u ON u.empresa_id = e.id AND u.perfil = 'empresa' AND u.login IS NOT NULL
+           ORDER BY e.razao_social`,
   normalizar: (d) => {
     if (d.cnpj !== undefined) {
       d.cnpj = digits(d.cnpj);
-      if (!validaCNPJ(d.cnpj)) throw httpError(400, 'CNPJ inválido');
+      if (!validaDocumento(d.cnpj)) throw httpError(400, 'CNPJ ou CPF inválido');
     }
     return d;
   },
+  depoisCriar: (id) => require('../services').garantirAcessoEmpresa(id),
 });
+
+/* Acesso da empresa: volta para a senha inicial, com troca obrigatória */
+router.post('/empresas/:id/acesso/redefinir', h((req, res) => {
+  const S = require('../services');
+  const u = S.garantirAcessoEmpresa(Number(req.params.id));
+  if (!u) throw httpError(404, 'Empresa não encontrada');
+  db.prepare('UPDATE usuarios SET senha_hash = ?, trocar_senha = 1, ativo = 1 WHERE id = ?').run(hashSenha(S.SENHA_INICIAL()), u.id);
+  res.json({ ok: true, login: u.login });
+}));
 
 crud('clinicas', 'clinicas', [
   'nome', 'cnpj', 'endereco', 'bairro', 'cidade', 'uf', 'cep', 'telefone', 'email', 'whatsapp_financeiro', 'email_financeiro', 'maps_url',

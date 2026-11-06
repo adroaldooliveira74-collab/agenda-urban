@@ -31,7 +31,20 @@ async function j(metodo, url, corpo, token) {
   });
   return [r.status, await r.json().catch(() => null)];
 }
-const login = async (email, senha) => (await j('POST', '/auth/login', { email, senha }))[1].token;
+// Senhas já trocadas no primeiro acesso, por login
+const trocadas = new Map();
+async function login(id, senha) {
+  const [st, r] = await j('POST', '/auth/login', { login: id, senha: trocadas.get(id) || senha });
+  assert.strictEqual(st, 200, JSON.stringify(r));
+  if (r.usuario.trocar_senha) {
+    const [s2] = await j('POST', '/auth/senha', { atual: senha, nova: 'SenhaNova#1' }, r.token);
+    assert.strictEqual(s2, 200);
+    trocadas.set(id, 'SenhaNova#1');
+  }
+  return r.token;
+}
+const ADMIN = 'urban.ambiental@hotmail.com';
+const cnpjHz = () => db.prepare("SELECT cnpj FROM empresas WHERE email = 'rh@horizonte.com.br'").get().cnpj;
 
 test('PIX BR Code tem CRC válido', () => {
   const p = gerarPayloadPix({ chave: 'teste@exemplo.com', nome: 'Clínica Teste', cidade: 'São Paulo', valor: 100, txid: 'ABC123' });
@@ -48,7 +61,7 @@ test('validação de CPF e CNPJ', () => {
 });
 
 test('fluxo completo NR-7', async () => {
-  const te = await login('empresa@horizonte.com.br', 'empresa123');
+  const te = await login(cnpjHz(), 'urban1234');
   const tc = await login('clinica@urbanclin.com.br', 'clinica123');
   const tm = await login('medico@urbanclin.com.br', 'medico123');
 
@@ -98,8 +111,8 @@ test('fluxo completo NR-7', async () => {
 });
 
 test('riscos da função cadastrada saem na guia e no ASO; sem cadastro saem em branco', async () => {
-  const te = await login('empresa@horizonte.com.br', 'empresa123');
-  const ta = await login('admin@urbanclin.com.br', 'admin123');
+  const te = await login(cnpjHz(), 'urban1234');
+  const ta = await login(ADMIN, 'urban1234');
   const tc = await login('clinica@urbanclin.com.br', 'clinica123');
   const tm = await login('medico@urbanclin.com.br', 'medico123');
   const emp = db.prepare("SELECT id FROM empresas WHERE email = 'rh@horizonte.com.br'").get();
@@ -139,8 +152,36 @@ test('riscos da função cadastrada saem na guia e no ASO; sem cadastro saem em 
   assert.ok(fs.existsSync(path.join(dir, aso2.arquivo || com.guia_path)));
 });
 
+test('login por CNPJ/CPF com senha inicial e troca obrigatória no primeiro acesso', async () => {
+  const cnpjLog = db.prepare("SELECT cnpj FROM empresas WHERE email = 'sesmt@lograpida.com.br'").get().cnpj;
+  // aceita o CNPJ formatado; senha errada é recusada
+  const fmt = cnpjLog.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+  assert.strictEqual((await j('POST', '/auth/login', { login: fmt, senha: 'errada' }))[0], 401);
+  const [st, r] = await j('POST', '/auth/login', { login: fmt, senha: 'urban1234' });
+  assert.strictEqual(st, 200);
+  assert.strictEqual(r.usuario.trocar_senha, true);
+  // antes de trocar a senha, nada além do próprio cadastro
+  assert.strictEqual((await j('GET', '/dashboard', null, r.token))[0], 403);
+  assert.strictEqual((await j('GET', '/auth/me', null, r.token))[0], 200);
+  assert.strictEqual((await j('POST', '/auth/senha', { atual: 'urban1234', nova: 'urban1234' }, r.token))[0], 400);
+  assert.strictEqual((await j('POST', '/auth/senha', { atual: 'urban1234', nova: 'Minha#2026' }, r.token))[0], 200);
+  assert.strictEqual((await j('GET', '/dashboard', null, r.token))[0], 200);
+  assert.strictEqual((await j('POST', '/auth/login', { login: cnpjLog, senha: 'urban1234' }))[0], 401, 'senha inicial deixa de valer');
+
+  // empresa sem CNPJ: cadastrada pelo CPF do empregador já nasce com acesso
+  const ta = await login(ADMIN, 'urban1234');
+  const [sc] = await j('POST', '/admin/empresas', { cnpj: '529.982.247-25', razao_social: 'João Produtor Rural', responsavel: 'João', telefone: '(44) 99999-0000', email: 'joao@exemplo.com' }, ta);
+  assert.strictEqual(sc, 201);
+  const [sl, rl] = await j('POST', '/auth/login', { login: '529.982.247-25', senha: 'urban1234' });
+  assert.strictEqual(sl, 200);
+  assert.strictEqual(rl.usuario.perfil, 'empresa');
+
+  // administrador de demonstração antigo não entra mais
+  assert.strictEqual((await j('POST', '/auth/login', { login: 'admin@urbanclin.com.br', senha: 'admin123' }))[0], 401);
+});
+
 test('perfis não acessam rotas de outros perfis', async () => {
-  const te = await login('empresa@horizonte.com.br', 'empresa123');
+  const te = await login(cnpjHz(), 'urban1234');
   assert.strictEqual((await j('GET', '/admin/empresas', null, te))[0], 403);
   assert.strictEqual((await j('GET', '/dashboard'))[0], 401);
 });

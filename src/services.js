@@ -3,7 +3,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { db, tx, getConfig } = require('./db');
 const {
-  httpError, digits, validaCPF, validaCNPJ, hoje, agoraISO, addMeses, diasEntre, dataHora, isISODate,
+  httpError, digits, validaCPF, validaCNPJ, validaDocumento, hoje, agoraISO, addMeses, diasEntre, dataHora, isISODate,
   gerarCodigo, exigir, fmtData,
 } = require('./util');
 const { gerarPayloadPix } = require('./pix');
@@ -209,7 +209,7 @@ function sugerirTipo(empresaId, cpf, funcao) {
 /* Agendamento                                                          */
 /* ------------------------------------------------------------------ */
 
-const CAMPOS_EMPRESA = { cnpj: 'CNPJ', razao_social: 'Razão Social', responsavel: 'Nome do Responsável', telefone: 'Telefone', email: 'E-mail' };
+const CAMPOS_EMPRESA = { cnpj: 'CNPJ ou CPF', razao_social: 'Razão Social', responsavel: 'Nome do Responsável', telefone: 'Telefone', email: 'E-mail' };
 const CAMPOS_FUNC = {
   nome: 'Nome Completo', rg: 'RG', cpf: 'CPF', telefone: 'Telefone', data_nascimento: 'Data de Nascimento', funcao: 'Função/Cargo',
 };
@@ -217,17 +217,98 @@ const CAMPOS_FUNC = {
 function salvarEmpresa(dados) {
   exigir(dados, Object.keys(CAMPOS_EMPRESA), CAMPOS_EMPRESA);
   const cnpj = digits(dados.cnpj);
-  if (!validaCNPJ(cnpj)) throw httpError(400, 'CNPJ inválido');
+  if (!validaDocumento(cnpj)) throw httpError(400, 'CNPJ ou CPF da empresa inválido');
   const existente = db.prepare('SELECT id FROM empresas WHERE cnpj = ?').get(cnpj);
   if (existente) {
     db.prepare('UPDATE empresas SET razao_social = ?, responsavel = ?, telefone = ?, email = ? WHERE id = ?')
       .run(dados.razao_social.trim(), dados.responsavel.trim(), dados.telefone.trim(), dados.email.trim(), existente.id);
+    garantirAcessoEmpresa(existente.id);
     return existente.id;
   }
-  return Number(
+  const id = Number(
     db.prepare('INSERT INTO empresas (cnpj, razao_social, responsavel, telefone, email) VALUES (?, ?, ?, ?, ?)')
       .run(cnpj, dados.razao_social.trim(), dados.responsavel.trim(), dados.telefone.trim(), dados.email.trim()).lastInsertRowid,
   );
+  garantirAcessoEmpresa(id);
+  return id;
+}
+
+/* ------------------------------------------------------------------ */
+/* Acesso: empresas entram com CNPJ/CPF; senha inicial trocada no 1º acesso */
+/* ------------------------------------------------------------------ */
+
+const SENHA_INICIAL = () => process.env.SENHA_INICIAL || 'urban1234';
+
+/** Cria (ou completa) o usuário da empresa: login = CNPJ/CPF, senha inicial, troca obrigatória. */
+function garantirAcessoEmpresa(empresaId) {
+  const { hashSenha } = require('./auth');
+  const e = db.prepare('SELECT * FROM empresas WHERE id = ?').get(empresaId);
+  if (!e) return null;
+  const doc = digits(e.cnpj);
+  const porLogin = db.prepare('SELECT * FROM usuarios WHERE login = ?').get(doc);
+  if (porLogin) return porLogin;
+  const u = db.prepare("SELECT * FROM usuarios WHERE perfil = 'empresa' AND empresa_id = ? ORDER BY id LIMIT 1").get(empresaId);
+  if (u) {
+    db.prepare('UPDATE usuarios SET login = ? WHERE id = ?').run(doc, u.id);
+    return db.prepare('SELECT * FROM usuarios WHERE id = ?').get(u.id);
+  }
+  const id = db.prepare(
+    "INSERT INTO usuarios (nome, email, login, senha_hash, perfil, empresa_id, trocar_senha) VALUES (?, ?, ?, ?, 'empresa', ?, 1)",
+  ).run(e.responsavel || e.razao_social, `${doc}@empresa.urbanclin`, doc, hashSenha(SENHA_INICIAL()), empresaId).lastInsertRowid;
+  return db.prepare('SELECT * FROM usuarios WHERE id = ?').get(id);
+}
+
+/** Traz do eSocial Brasil a empresa-cliente da consultoria e cadastra com acesso. */
+async function empresaDoEsocial(doc) {
+  const esocial = require('./esocial');
+  if (!esocial.configurado()) return null;
+  const es = await esocial.empresaPorCnpj(doc);
+  if (!es) return null;
+  const r = es.responsavel || {};
+  const id = Number(db.prepare(
+    `INSERT INTO empresas (cnpj, razao_social, responsavel, telefone, email, esocial_id) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(cnpj) DO UPDATE SET esocial_id = excluded.esocial_id RETURNING id`,
+  ).get(doc, es.razao_social || es.nome, r.nome || es.razao_social || es.nome, es.telefone || r.celular || r.telefone || '',
+    es.email || r.email || '', es.id).id);
+  return garantirAcessoEmpresa(id);
+}
+
+/**
+ * Login: e-mail (administração, clínica, médico) ou CNPJ/CPF (empresa).
+ * Empresa ainda não cadastrada aqui, mas cliente no eSocial Brasil, é criada no
+ * primeiro acesso com a senha inicial.
+ */
+async function entrar(identificador, senha) {
+  const { confereSenha } = require('./auth');
+  const id = String(identificador || '').trim();
+  let u;
+  if (id.includes('@')) {
+    u = db.prepare('SELECT * FROM usuarios WHERE lower(email) = lower(?)').get(id);
+  } else {
+    const doc = digits(id);
+    if (![11, 14].includes(doc.length)) throw httpError(401, 'Informe o CNPJ/CPF da empresa ou o e-mail de acesso');
+    u = db.prepare('SELECT * FROM usuarios WHERE login = ?').get(doc);
+    if (!u) {
+      const e = db.prepare('SELECT id FROM empresas WHERE cnpj = ?').get(doc);
+      if (e) u = garantirAcessoEmpresa(e.id);
+      else if (String(senha) === SENHA_INICIAL() && validaDocumento(doc)) {
+        try { u = await empresaDoEsocial(doc); } catch (err) { console.error('[esocial]', err.message); }
+      }
+    }
+  }
+  if (!u || !u.ativo || !confereSenha(senha || '', u.senha_hash)) throw httpError(401, 'Login ou senha inválidos');
+  return u;
+}
+
+/** Admin da consultoria: e-mail da conta, senha inicial, troca no 1º acesso. */
+function garantirAdminConsultoria() {
+  const { hashSenha } = require('./auth');
+  const email = process.env.ADMIN_EMAIL || 'urban.ambiental@hotmail.com';
+  if (db.prepare('SELECT id FROM usuarios WHERE lower(email) = lower(?)').get(email)) return;
+  db.prepare("INSERT INTO usuarios (nome, email, senha_hash, perfil, trocar_senha) VALUES ('URBAN CLIN - Consultoria', ?, ?, 'admin', 1)")
+    .run(email, hashSenha(SENHA_INICIAL()));
+  // o administrador de demonstração deixa de valer
+  db.prepare("UPDATE usuarios SET ativo = 0 WHERE lower(email) = 'admin@urbanclin.com.br'").run();
 }
 
 function salvarFuncionario(empresaId, dados, { atualizarFuncao = true } = {}) {
@@ -621,4 +702,5 @@ module.exports = {
   horariosDisponiveis, datasDisponiveis, clinicasDisponiveis, sugerirTipo, salvarEmpresa, salvarFuncionario, registrarHistorico,
   criarAgendamento, finalizarAgendamento, reagendar, buscarASO, emitirASO, assinarASO, gerarArquivoASO, vencimentos, ultimoASO,
   payloadPixAgendamento, CATEGORIAS_RISCO, normFuncao, textoRiscos, riscoCadastrado, salvarRiscoFuncao, resolverRiscos, importarFuncoesEsocial,
+  SENHA_INICIAL, garantirAcessoEmpresa, entrar, garantirAdminConsultoria,
 };

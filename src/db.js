@@ -244,6 +244,10 @@ function addColuna(tabela, coluna, tipo) {
 }
 addColuna('agendamentos', 'riscos', 'TEXT');
 addColuna('empresas', 'esocial_id', 'INTEGER');
+// Login das empresas pelo CNPJ/CPF e troca obrigatória da senha inicial
+addColuna('usuarios', 'login', 'TEXT');
+addColuna('usuarios', 'trocar_senha', 'INTEGER NOT NULL DEFAULT 0');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_login ON usuarios(login)');
 
 /** Executa fn dentro de uma transação. */
 function tx(fn) {

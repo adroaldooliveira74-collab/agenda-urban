@@ -15,7 +15,9 @@ const digits = (s) => String(s || '').replace(/\D/g, '');
 const fmtData = (iso) => (iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '—');
 const fmtMoeda = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtCPF = (s) => digits(s).replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
-const fmtCNPJ = (s) => digits(s).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+const fmtCNPJ = (s) => (digits(s).length === 11
+  ? digits(s).replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
+  : digits(s).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5'));
 const pad = (n) => String(n).padStart(2, '0');
 const hojeISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 const addDiasISO = (iso, n) => { const [y, m, d] = iso.split('-').map(Number); const x = new Date(y, m - 1, d + n); return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`; };
@@ -135,20 +137,48 @@ function telaLogin() {
   $('#app').innerHTML = `<div class="login"><form class="login-card" id="flogin">
     <span class="logo-chip"><img src="/img/logo.png" alt="UrbanClin — Medicina e Segurança do Trabalho"></span>
     <p class="muted" style="text-align:center">Agenda de exames ocupacionais · NR-7 / PCMSO</p>
-    <div class="grid">${campo({ k: 'email', rot: 'E-mail', tipo: 'email', req: true, attrs: 'autocomplete="username"' })}
+    <div class="grid">${campo({ k: 'login', rot: 'CNPJ ou CPF da empresa (ou e-mail)', req: true, attrs: 'autocomplete="username" autocapitalize="off"' })}
     ${campo({ k: 'senha', rot: 'Senha', tipo: 'password', req: true, attrs: 'autocomplete="current-password"' })}
     <button class="btn primary" style="justify-content:center">Entrar</button></div>
+    <p class="muted small" style="text-align:center">Empresas: entre com o CNPJ ou CPF. No primeiro acesso, use a senha inicial informada pela UrbanClin e crie a sua.</p>
     <div class="demo-users">Acesso de demonstração:<br>
-      ${[['Administrador', 'admin@urbanclin.com.br', 'admin123'], ['Clínica', 'clinica@urbanclin.com.br', 'clinica123'], ['Médico', 'medico@urbanclin.com.br', 'medico123'], ['Empresa', 'empresa@horizonte.com.br', 'empresa123']]
+      ${[['Clínica', 'clinica@urbanclin.com.br', 'clinica123'], ['Médico', 'medico@urbanclin.com.br', 'medico123']]
         .map(([r, e, s]) => `<button type="button" class="btn sm" data-e="${e}" data-s="${s}">${r}</button>`).join('')}
     </div></form></div>`;
-  $$('.demo-users button').forEach((b) => b.addEventListener('click', () => { $('[name=email]').value = b.dataset.e; $('[name=senha]').value = b.dataset.s; }));
+  $$('.demo-users button').forEach((b) => b.addEventListener('click', () => { $('[name=login]').value = b.dataset.e; $('[name=senha]').value = b.dataset.s; }));
   $('#flogin').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
       const r = await api('POST', '/auth/login', valoresForm(e.target));
       S.token = r.token;
       try { localStorage.setItem('uc_token', r.token); } catch { /* */ }
+      if (!location.hash || location.hash === '#/') location.hash = '#/dashboard';
+      render();
+    } catch (err) { toast(err.message, 'erro'); }
+  });
+}
+
+/** Primeiro acesso: troca obrigatória da senha inicial antes de usar o sistema. */
+function telaPrimeiroAcesso() {
+  const quem = S.me.empresa ? `${S.me.empresa.razao_social} · ${fmtCNPJ(S.me.empresa.cnpj)}` : S.me.email;
+  $('#app').innerHTML = `<div class="login"><form class="login-card" id="fprim">
+    <span class="logo-chip"><img src="/img/logo.png" alt="UrbanClin"></span>
+    <h2 style="text-align:center;margin:4px 0">Primeiro acesso</h2>
+    <p class="muted" style="text-align:center">${esc(quem)}<br>Crie a sua senha para continuar.</p>
+    <div class="grid">${campo({ k: 'atual', rot: 'Senha inicial', tipo: 'password', req: true, attrs: 'autocomplete="current-password"' })}
+    ${campo({ k: 'nova', rot: 'Nova senha (mín. 6)', tipo: 'password', req: true, attrs: 'autocomplete="new-password"' })}
+    ${campo({ k: 'confirma', rot: 'Repita a nova senha', tipo: 'password', req: true, attrs: 'autocomplete="new-password"' })}
+    <button class="btn primary" style="justify-content:center">Salvar e entrar</button>
+    <button type="button" class="btn" id="psair" style="justify-content:center">Sair</button></div></form></div>`;
+  $('#psair').addEventListener('click', sair);
+  $('#fprim').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const v = valoresForm(e.target);
+    if (v.nova !== v.confirma) return toast('As senhas não conferem', 'erro');
+    try {
+      await api('POST', '/auth/senha', { atual: v.atual, nova: v.nova });
+      toast('Senha criada', 'ok');
+      S.me = null;
       if (!location.hash || location.hash === '#/') location.hash = '#/dashboard';
       render();
     } catch (err) { toast(err.message, 'erro'); }
@@ -195,6 +225,7 @@ async function render() {
   if (!S.token) return telaLogin();
   if (!S.me) {
     try { S.me = await api('GET', '/auth/me'); } catch { return telaLogin(); }
+    if (S.me.trocar_senha) return telaPrimeiroAcesso();
     layout();
   }
   if (!$('#main')) layout();
@@ -569,7 +600,7 @@ ROTAS.novo = async (main, _a, qs) => {
       <div class="card"><h2>Dados da empresa</h2>
         ${S.me.perfil === 'admin' ? `<div class="form" style="margin-bottom:12px">${campo({ k: '_emp', rot: 'Empresa cadastrada', tipo: 'select', full: true, opcoes: [['', '— nova empresa / digitar dados —'], ...empresas.map((x) => [x.id, `${x.razao_social} (${fmtCNPJ(x.cnpj)})`])] })}</div>` : ''}
         <div class="form" id="femp">
-        ${campo({ k: 'cnpj', rot: 'CNPJ', req: true, val: fmtCNPJ(e.cnpj), attrs: `${leitura} inputmode="numeric"` })}${campo({ k: 'razao_social', rot: 'Razão Social', req: true, val: e.razao_social })}
+        ${campo({ k: 'cnpj', rot: 'CNPJ ou CPF', req: true, val: fmtCNPJ(e.cnpj), attrs: `${leitura} inputmode="numeric"` })}${campo({ k: 'razao_social', rot: 'Razão Social', req: true, val: e.razao_social })}
         ${campo({ k: 'responsavel', rot: 'Nome do Responsável', req: true, val: e.responsavel })}${campo({ k: 'telefone', rot: 'Telefone', req: true, val: e.telefone, tipo: 'tel' })}
         ${campo({ k: 'email', rot: 'E-mail', req: true, val: e.email, tipo: 'email' })}</div></div>
       <div class="card"><h2>Dados do funcionário</h2><div class="form" id="ffunc">
@@ -828,9 +859,10 @@ const ativoTag = (l) => (l.ativo ? '<span class="tag ok">Ativo</span>' : '<span 
 
 ROTAS.empresas = crudPage({
   titulo: 'Empresas', endpoint: '/admin/empresas',
-  colunas: [['Razão social', (l) => esc(l.razao_social)], ['CNPJ', (l) => esc(fmtCNPJ(l.cnpj))], ['Responsável', (l) => esc(l.responsavel)], ['Contato', (l) => `${esc(l.telefone)}<div class="small muted">${esc(l.email)}</div>`], ['', ativoTag],
-    ['', (l) => `<button class="btn" data-riscos="${l.id}">Riscos por função</button>`]],
-  campos: [{ k: 'cnpj', rot: 'CNPJ', req: true }, { k: 'razao_social', rot: 'Razão Social', req: true }, { k: 'responsavel', rot: 'Responsável', req: true },
+  colunas: [['Razão social', (l) => esc(l.razao_social)], ['CNPJ / CPF', (l) => esc(fmtCNPJ(l.cnpj))], ['Responsável', (l) => esc(l.responsavel)], ['Contato', (l) => `${esc(l.telefone)}<div class="small muted">${esc(l.email)}</div>`], ['', ativoTag],
+    ['Acesso', (l) => (l.acesso_login ? `${l.acesso_pendente ? '<span class="tag warn">Aguardando 1º acesso</span>' : '<span class="tag ok">Senha criada</span>'}<div class="small muted">login ${esc(fmtCNPJ(l.acesso_login))}</div>` : '<span class="tag neutro">—</span>')],
+    ['', (l) => `<button class="btn" data-riscos="${l.id}">Riscos por função</button> <button class="btn" data-redefinir="${l.id}">Redefinir senha</button>`]],
+  campos: [{ k: 'cnpj', rot: 'CNPJ ou CPF', req: true }, { k: 'razao_social', rot: 'Razão Social', req: true }, { k: 'responsavel', rot: 'Responsável', req: true },
     { k: 'telefone', rot: 'Telefone', req: true }, { k: 'email', rot: 'E-mail', tipo: 'email', req: true }, { k: 'ativo', rot: 'Situação', tipo: 'select', opcoes: ativoOp, padrao: '1' }],
 });
 
@@ -878,6 +910,14 @@ async function modalRiscos(empresaId) {
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-riscos]');
   if (b) { e.stopPropagation(); modalRiscos(b.dataset.riscos).catch((err) => toast(err.message, 'erro')); }
+  const r = e.target.closest('[data-redefinir]');
+  if (r) {
+    e.stopPropagation();
+    if (!confirm('Voltar o acesso desta empresa para a senha inicial? Ela terá de criar uma nova senha no próximo acesso.')) return;
+    api('POST', `/admin/empresas/${r.dataset.redefinir}/acesso/redefinir`)
+      .then((x) => { toast(`Acesso redefinido. Login: ${fmtCNPJ(x.login)}`, 'ok'); render(); })
+      .catch((err) => toast(err.message, 'erro'));
+  }
 });
 
 ROTAS.clinicas = crudPage({

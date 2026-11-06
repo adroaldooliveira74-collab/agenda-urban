@@ -2,9 +2,10 @@
 require('dotenv').config();
 const path = require('node:path');
 const express = require('express');
-const { seed } = require('./seed');
+const { seed, garantirAcessos } = require('./seed');
 
 seed({ demo: process.env.SEED_DEMO !== 'false' });
+garantirAcessos();
 
 const app = express();
 app.disable('x-powered-by');

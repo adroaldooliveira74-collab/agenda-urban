@@ -28,11 +28,10 @@ const upload = multer({
 /* Público                                                              */
 /* ------------------------------------------------------------------ */
 
-router.post('/auth/login', h((req, res) => {
-  const { email, senha } = req.body || {};
-  const u = db.prepare('SELECT * FROM usuarios WHERE lower(email) = lower(?)').get(String(email || '').trim());
-  if (!u || !u.ativo || !confereSenha(senha || '', u.senha_hash)) throw httpError(401, 'E-mail ou senha inválidos');
-  res.json({ token: emitirToken(u), usuario: { id: u.id, nome: u.nome, email: u.email, perfil: u.perfil } });
+router.post('/auth/login', h(async (req, res) => {
+  const { login, email, senha } = req.body || {};
+  const u = await S.entrar(login ?? email, senha);
+  res.json({ token: emitirToken(u), usuario: { id: u.id, nome: u.nome, email: u.email, login: u.login, perfil: u.perfil, trocar_senha: !!u.trocar_senha } });
 }));
 
 /** Verificação pública da assinatura eletrônica de um ASO. */
@@ -69,7 +68,8 @@ router.post('/auth/senha', h((req, res) => {
   const u = db.prepare('SELECT * FROM usuarios WHERE id = ?').get(req.user.id);
   if (!confereSenha(atual || '', u.senha_hash)) throw httpError(400, 'Senha atual incorreta');
   if (String(nova || '').length < 6) throw httpError(400, 'A nova senha deve ter ao menos 6 caracteres');
-  db.prepare('UPDATE usuarios SET senha_hash = ? WHERE id = ?').run(hashSenha(nova), u.id);
+  if (String(nova) === S.SENHA_INICIAL()) throw httpError(400, 'A nova senha não pode ser igual à senha inicial');
+  db.prepare('UPDATE usuarios SET senha_hash = ?, trocar_senha = 0 WHERE id = ?').run(hashSenha(nova), u.id);
   res.json({ ok: true });
 }));
 

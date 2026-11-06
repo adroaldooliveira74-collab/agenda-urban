@@ -46,7 +46,11 @@ function validaCNPJ(cnpj) {
 }
 
 const fmtCPF = (s) => digits(s).replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
-const fmtCNPJ = (s) => digits(s).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+/** Documento da empresa: CNPJ (14 dígitos) ou CPF (11 dígitos, empregador pessoa física). */
+const fmtCNPJ = (s) => (digits(s).length === 11
+  ? digits(s).replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
+  : digits(s).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5'));
+const validaDocumento = (s) => (digits(s).length === 11 ? validaCPF(s) : validaCNPJ(s));
 const fmtMoeda = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtData = (iso) => {
   if (!iso) return '';
@@ -110,6 +114,6 @@ function pick(obj, keys) {
 }
 
 module.exports = {
-  HttpError, httpError, h, digits, validaCPF, validaCNPJ, fmtCPF, fmtCNPJ, fmtMoeda, fmtData,
+  HttpError, httpError, h, digits, validaCPF, validaCNPJ, validaDocumento, fmtCPF, fmtCNPJ, fmtMoeda, fmtData,
   isoLocal, hoje, agoraISO, addDias, addMeses, diasEntre, dataHora, isISODate, gerarCodigo, exigir, pick,
 };

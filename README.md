@@ -26,6 +26,14 @@ Acesse <http://localhost:3000>. No primeiro início o banco é criado em `data/`
 
 Testes automatizados: `npm test`.
 
+## Publicar na nuvem (Render)
+
+[![Deploy no Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/adroaldooliveira74-collab/agenda-urban)
+
+O arquivo `render.yaml` já configura tudo (Node 22, `npm ci`, `npm start`, verificação em `/healthz` e `JWT_SECRET` gerado automaticamente). Clique no botão, entre com a sua conta do GitHub e confirme em **Apply**. Cada `git push` na `main` publica uma nova versão.
+
+> **Plano gratuito = só para testes:** o serviço "dorme" após 15 minutos sem acesso (o primeiro acesso depois disso demora cerca de 30 s) e o disco é temporário, então banco, PDFs e comprovantes voltam aos dados de demonstração a cada reinício. Para uso real, use um plano pago com disco persistente montado em `/var/data` e a variável `DATA_DIR=/var/data`.
+
 ## Configuração (`.env`)
 
 Copie `.env.example` para `.env`. Principais variáveis:

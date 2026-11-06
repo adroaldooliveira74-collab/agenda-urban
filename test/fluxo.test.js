@@ -190,18 +190,23 @@ test('sincronização diária com o eSocial grava só empresas novas ou alterada
     { id: 902, cnpj: hz.cnpj, razao_social: hz.razao_social, telefone: '(44) 99999-1111', email: hz.email, responsavel: { nome: hz.responsavel } },
     { id: 903, cnpj: '123', razao_social: 'Documento inválido' },
     { id: 904, cnpj: '45.997.418/0001-53', razao_social: 'Empresa Bloqueada Ltda', ativo: true, bloqueado: true },
+    // empregador pessoa física: a API traz cnpj nulo e o CPF no responsável
+    { id: 905, cnpj: null, tp_insc: 2, tipo_identificacao: 'CPF', razao_social: 'José Produtor Rural', ativo: true, bloqueado: false, responsavel: { nome: 'José', cpf: '39053344705' } },
   ];
   es.configurado = () => true;
   es.todasEmpresas = async () => lista;
   try {
     const r1 = await sincronizacaoDiaria({ forcar: true });
-    assert.deepStrictEqual([r1.recebidas, r1.novas, r1.atualizadas, r1.ignoradas, r1.bloqueadas], [4, 1, 1, 1, 1]);
+    assert.deepStrictEqual([r1.recebidas, r1.novas, r1.atualizadas, r1.ignoradas, r1.bloqueadas], [5, 2, 1, 1, 1]);
+    const [spf, rpf] = await j('POST', '/auth/login', { login: '390.533.447-05', senha: 'urban1234' });
+    assert.strictEqual(spf, 200, 'empregador pessoa física entra pelo CPF');
+    assert.strictEqual(rpf.usuario.perfil, 'empresa');
     assert.ok(!db.prepare("SELECT 1 FROM empresas WHERE cnpj = '45997418000153'").get(), 'bloqueada não é cadastrada');
     assert.strictEqual((await j('POST', '/auth/login', { login: '45997418000153', senha: 'urban1234' }))[0], 401);
     assert.strictEqual(db.prepare('SELECT telefone FROM empresas WHERE id = ?').get(hz.id).telefone, '(44) 99999-1111');
     // nada mudou no eSocial → nada é gravado
     const r2 = await sincronizacaoDiaria({ forcar: true });
-    assert.deepStrictEqual([r2.novas, r2.atualizadas, r2.sem_mudanca], [0, 0, 2]);
+    assert.deepStrictEqual([r2.novas, r2.atualizadas, r2.sem_mudanca], [0, 0, 3]);
     // fora do horário/no mesmo dia, a rotina automática não roda de novo
     assert.strictEqual(await sincronizacaoDiaria(), null);
     // empresa nova já entra com o CNPJ e a senha inicial

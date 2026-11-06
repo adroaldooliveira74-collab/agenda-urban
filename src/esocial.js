@@ -39,11 +39,25 @@ async function get(caminho) {
 
 const so = (s) => String(s || '').replace(/\D/g, '');
 
-/** Empresa-cliente da consultoria pelo CNPJ. */
+/**
+ * Documento de acesso da empresa: o CNPJ; no empregador pessoa física (tipo CPF) a API
+ * não preenche o campo cnpj, e o CPF do empregador é o do responsável.
+ */
+function documento(e) {
+  const c = so(e.cnpj);
+  if (c) return c;
+  const pf = e.tp_insc === 2 || String(e.tipo_identificacao || '').toUpperCase() === 'CPF';
+  return pf ? so(e.responsavel && e.responsavel.cpf) : '';
+}
+
+/** Empresa-cliente da consultoria pelo CNPJ (ou CPF do empregador pessoa física). */
 async function empresaPorCnpj(cnpj) {
   const d = await get(`/empresas?cnpj=${so(cnpj)}&per_page=5`);
   const lista = (d && d.data) || [];
-  return lista.find((e) => so(e.cnpj) === so(cnpj)) || null;
+  const achada = lista.find((e) => documento(e) === so(cnpj));
+  if (achada || so(cnpj).length !== 11) return achada || null;
+  // CPF: a API não filtra pelo CPF do empregador; procura na lista completa
+  return (await todasEmpresas()).find((e) => documento(e) === so(cnpj)) || null;
 }
 
 /** Empregado pelo CPF dentro da empresa do eSocial. */
@@ -78,4 +92,4 @@ async function todasEmpresas({ maxPaginas = 100 } = {}) {
   return lista;
 }
 
-module.exports = { configurado, empresaPorCnpj, empregado, funcoesDaEmpresa, todasEmpresas };
+module.exports = { configurado, documento, empresaPorCnpj, empregado, funcoesDaEmpresa, todasEmpresas };

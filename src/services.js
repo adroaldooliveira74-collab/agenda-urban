@@ -308,7 +308,7 @@ async function entrar(identificador, senha) {
 function dadosEsocial(es) {
   const r = es.responsavel || {};
   const d = {
-    cnpj: digits(es.cnpj),
+    cnpj: require('./esocial').documento(es),
     razao_social: String(es.razao_social || es.nome || '').trim(),
     responsavel: String(r.nome || '').trim(),
     telefone: String(es.telefone || r.celular || r.telefone || '').trim(),
@@ -349,9 +349,11 @@ async function sincronizarEmpresasEsocial() {
   const lista = await esocial.todasEmpresas();
   const res = { recebidas: lista.length, novas: 0, atualizadas: 0, sem_mudanca: 0, bloqueadas: 0, retiradas: 0, desativadas: 0, ignoradas: 0, repetidas: 0 };
   const vistos = new Set();
+  // liberadas primeiro: se o mesmo CNPJ/CPF tem um cadastro liberado e outro bloqueado, vale o liberado
+  const ordenada = lista.map((es) => dadosEsocial(es)).map((d, i) => ({ d, es: lista[i] }))
+    .sort((a, b) => Number(b.d.liberada) - Number(a.d.liberada));
   tx(() => {
-    for (const es of lista) {
-      const d = dadosEsocial(es);
+    for (const { es, d } of ordenada) {
       if (!validaDocumento(d.cnpj) || !d.razao_social) { res.ignoradas++; continue; }
       // o mesmo CNPJ pode vir mais de uma vez na lista: vale o primeiro, para não regravar toda noite
       if (vistos.has(d.cnpj)) { res.repetidas++; continue; }

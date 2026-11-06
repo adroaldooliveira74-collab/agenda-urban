@@ -23,3 +23,5 @@ services:
         value: "true"
       - key: ALERTAS_INTERVALO_MIN
         value: "15"
+      - key: ESOCIAL_TOKEN
+        sync: false

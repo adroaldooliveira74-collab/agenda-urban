@@ -43,6 +43,8 @@ Copie `.env.example` para `.env`. Principais variáveis:
 - **E-mail:** `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`.
 - **WhatsApp:** `WHATSAPP_API_URL` e `WHATSAPP_API_TOKEN`. O sistema faz `POST` com JSON `{ phone, message, fileName?, fileBase64? }`, o que serve para Z-API, Evolution API, WPPConnect etc. (ajuste o formato em `src/notify.js` se o provedor pedir outro).
 
+- **eSocial Brasil:** `ESOCIAL_TOKEN` (chave da API de integração). No Render, cadastre em *Environment*; na máquina local, se vazio, o sistema usa `~/.esocial/credenciais.env`.
+
 Sem SMTP/WhatsApp configurados, cada envio fica registrado como **simulado** em *Envios e alertas*, e o restante do sistema funciona normalmente.
 
 ## Funcionalidades
@@ -64,6 +66,8 @@ Sem SMTP/WhatsApp configurados, cada envio fica registrado como **simulado** em 
 **ASO e histórico (PCMSO):** o ASO registra riscos, exames, conclusão (apto / apto com restrição / inapto) e validade. A emissão atualiza o histórico do funcionário (admissão, periódicos, mudanças de função, retornos, demissão). A assinatura eletrônica grava um hash SHA-256 com o médico, o CRM e a data/hora, e o PDF traz um QR Code para a verificação pública em `/#/verificar/<código>`.
 
 > A assinatura é eletrônica simples (Lei 14.063/2020). Para assinatura qualificada com certificado ICP-Brasil, é preciso integrar um provedor de certificado digital.
+
+**Riscos ocupacionais por função (PGR):** em *Empresas → Riscos por função*, cadastre os riscos físicos, químicos, biológicos, ergonômicos e de acidentes de cada função. Ao agendar, a guia e o ASO já saem com os riscos da função; **função sem cadastro sai com os riscos em branco**. Com o eSocial Brasil configurado, a empresa é localizada pelo CNPJ, a função registrada lá para o CPF também é considerada, e o botão *Trazer funções do eSocial Brasil* cria a lista de funções da empresa para você preencher os riscos.
 
 **Dashboards:** administrativo (exames de hoje, pendentes, cancelamentos, receita do dia/mês/ano, gráficos de agendamentos, exames por empresa, faturamento e comparecimento), da clínica e da empresa (solicitados, pendentes, ASOs, vencimentos próximos, funcionários em atraso).
 

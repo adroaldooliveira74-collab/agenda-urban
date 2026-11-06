@@ -1,0 +1,26 @@
+{
+  "name": "agenda-urban",
+  "version": "1.0.0",
+  "description": "Urban Clin - Sistema de Gestão de Exames Ocupacionais e Agenda Médica (NR-7 / PCMSO)",
+  "main": "src/server.js",
+  "private": true,
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning src/server.js",
+    "dev": "node --no-warnings=ExperimentalWarning --watch src/server.js",
+    "seed": "node --no-warnings=ExperimentalWarning src/seed.js",
+    "test": "node --no-warnings=ExperimentalWarning --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "nodemailer": "^6.9.16",
+    "pdfkit": "^0.15.2",
+    "qrcode": "^1.5.4"
+  }
+}

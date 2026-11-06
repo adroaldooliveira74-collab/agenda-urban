@@ -15,7 +15,7 @@ const digits = (s) => String(s || '').replace(/\D/g, '');
 const fmtData = (iso) => (iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '—');
 const fmtMoeda = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtCPF = (s) => digits(s).replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
-const fmtCNPJ = (s) => (digits(s).length === 11
+const fmtCNPJ = (s) => (/^ES\d+$/i.test(String(s || '').trim()) ? String(s).trim().toUpperCase() : digits(s).length === 11
   ? digits(s).replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
   : digits(s).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5'));
 const pad = (n) => String(n).padStart(2, '0');

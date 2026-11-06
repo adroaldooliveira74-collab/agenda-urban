@@ -3,7 +3,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { db, tx, getConfig } = require('./db');
 const {
-  httpError, digits, validaCPF, validaCNPJ, validaDocumento, hoje, agoraISO, addMeses, diasEntre, dataHora, isISODate,
+  httpError, digits, validaCPF, validaCNPJ, validaDocumento, ehCodigoAcesso, hoje, agoraISO, addMeses, diasEntre, dataHora, isISODate,
   gerarCodigo, exigir, fmtData,
 } = require('./util');
 const { gerarPayloadPix } = require('./pix');
@@ -244,7 +244,7 @@ function garantirAcessoEmpresa(empresaId) {
   const { hashSenha } = require('./auth');
   const e = db.prepare('SELECT * FROM empresas WHERE id = ?').get(empresaId);
   if (!e) return null;
-  const doc = digits(e.cnpj);
+  const doc = ehCodigoAcesso(e.cnpj) ? String(e.cnpj).trim().toUpperCase() : digits(e.cnpj);
   const porLogin = db.prepare('SELECT * FROM usuarios WHERE login = ?').get(doc);
   if (porLogin) return porLogin;
   const u = db.prepare("SELECT * FROM usuarios WHERE perfil = 'empresa' AND empresa_id = ? ORDER BY id LIMIT 1").get(empresaId);
@@ -284,6 +284,14 @@ async function entrar(identificador, senha) {
   let u;
   if (id.includes('@')) {
     u = db.prepare('SELECT * FROM usuarios WHERE lower(email) = lower(?)').get(id);
+  } else if (ehCodigoAcesso(id)) {
+    // empresa sem CNPJ/CPF próprio: entra com o código gerado (ES + número)
+    const cod = id.toUpperCase();
+    u = db.prepare('SELECT * FROM usuarios WHERE login = ?').get(cod);
+    if (!u) {
+      const e = db.prepare('SELECT id FROM empresas WHERE cnpj = ?').get(cod);
+      if (e) u = garantirAcessoEmpresa(e.id);
+    }
   } else {
     const doc = digits(id);
     if (![11, 14].includes(doc.length)) throw httpError(401, 'Informe o CNPJ/CPF da empresa ou o e-mail de acesso');
@@ -349,23 +357,31 @@ async function sincronizarEmpresasEsocial() {
   const lista = await esocial.todasEmpresas();
   const res = { recebidas: lista.length, novas: 0, atualizadas: 0, sem_mudanca: 0, bloqueadas: 0, retiradas: 0, desativadas: 0, ignoradas: 0, repetidas: 0 };
   const vistos = new Set();
-  // liberadas primeiro: se o mesmo CNPJ/CPF tem um cadastro liberado e outro bloqueado, vale o liberado
+  // liberadas primeiro: se o mesmo CNPJ/CPF tem um cadastro liberado e outro bloqueado, o liberado fica com o documento
   const ordenada = lista.map((es) => dadosEsocial(es)).map((d, i) => ({ d, es: lista[i] }))
     .sort((a, b) => Number(b.d.liberada) - Number(a.d.liberada));
+  const porEsocial = db.prepare('SELECT * FROM empresas WHERE esocial_id = ?');
+  const porDoc = db.prepare('SELECT * FROM empresas WHERE cnpj = ?');
   tx(() => {
     for (const { es, d } of ordenada) {
-      if (!validaDocumento(d.cnpj) || !d.razao_social) { res.ignoradas++; continue; }
-      // o mesmo CNPJ pode vir mais de uma vez na lista: vale o primeiro, para não regravar toda noite
-      if (vistos.has(d.cnpj)) { res.repetidas++; continue; }
-      vistos.add(d.cnpj);
-      const local = db.prepare('SELECT * FROM empresas WHERE cnpj = ?').get(d.cnpj);
+      if (!d.razao_social) { res.ignoradas++; continue; }
+      // cada cadastro do eSocial é uma empresa; o mesmo cadastro repetido na lista conta uma vez só
+      if (vistos.has(es.id)) { res.repetidas++; continue; }
+      vistos.add(es.id);
+      const docValido = validaDocumento(d.cnpj);
+      let local = porEsocial.get(es.id);
       // Só as empresas liberadas no eSocial Brasil entram; bloqueadas ficam de fora
       if (!d.liberada) {
         res.bloqueadas++;
-        const acao = local && local.esocial_id ? tirarEmpresaBloqueada(local) : null;
+        const acao = local ? tirarEmpresaBloqueada(local) : null;
         if (acao === 'retirada') res.retiradas++;
         if (acao === 'desativada') res.desativadas++;
         continue;
+      }
+      if (!local && docValido) {
+        // empresa já cadastrada aqui pelo documento (manual ou de outro cadastro do eSocial)
+        const mesma = porDoc.get(d.cnpj);
+        if (mesma && (!mesma.esocial_id || !lista.some((x) => x.id === mesma.esocial_id && x.id !== es.id))) local = mesma;
       }
       if (local && !local.ativo && local.esocial_id) {
         // voltou a ser liberada no eSocial
@@ -373,9 +389,11 @@ async function sincronizarEmpresasEsocial() {
         db.prepare('UPDATE usuarios SET ativo = 1 WHERE empresa_id = ?').run(local.id);
       }
       if (!local) {
+        // sem CNPJ/CPF válido, ou documento já usado por outra empresa do mesmo dono: gera o código de acesso
+        const doc = docValido && !porDoc.get(d.cnpj) ? d.cnpj : `ES${es.id}`;
         const id = Number(db.prepare(
           'INSERT INTO empresas (cnpj, razao_social, responsavel, telefone, email, esocial_id, esocial_hash) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        ).run(d.cnpj, d.razao_social, d.responsavel || d.razao_social, d.telefone, d.email, es.id, d.hash).lastInsertRowid);
+        ).run(doc, d.razao_social, d.responsavel || d.razao_social, d.telefone, d.email, es.id, d.hash).lastInsertRowid);
         garantirAcessoEmpresa(id);
         res.novas++;
       } else if (local.esocial_hash !== d.hash || local.esocial_id !== es.id) {

@@ -41,7 +41,8 @@ crud('empresas', 'empresas', ['cnpj', 'razao_social', 'responsavel', 'telefone',
            FROM empresas e LEFT JOIN usuarios u ON u.empresa_id = e.id AND u.perfil = 'empresa' AND u.login IS NOT NULL
            ORDER BY e.razao_social`,
   normalizar: (d) => {
-    if (d.cnpj !== undefined) {
+    if (d.cnpj !== undefined && require('../util').ehCodigoAcesso(d.cnpj)) d.cnpj = String(d.cnpj).trim().toUpperCase();
+    else if (d.cnpj !== undefined) {
       d.cnpj = digits(d.cnpj);
       if (!validaDocumento(d.cnpj)) throw httpError(400, 'CNPJ ou CPF inválido');
     }

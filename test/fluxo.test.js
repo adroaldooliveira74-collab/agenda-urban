@@ -192,12 +192,20 @@ test('sincronização diária com o eSocial grava só empresas novas ou alterada
     { id: 904, cnpj: '45.997.418/0001-53', razao_social: 'Empresa Bloqueada Ltda', ativo: true, bloqueado: true },
     // empregador pessoa física: a API traz cnpj nulo e o CPF no responsável
     { id: 905, cnpj: null, tp_insc: 2, tipo_identificacao: 'CPF', razao_social: 'José Produtor Rural', ativo: true, bloqueado: false, responsavel: { nome: 'José', cpf: '39053344705' } },
+    // outra empresa liberada do mesmo dono (mesmo CPF): entra também, com código de acesso próprio
+    { id: 906, cnpj: null, tp_insc: 2, tipo_identificacao: 'CPF', razao_social: 'José Produtor Rural - Sítio 2', ativo: true, bloqueado: false, responsavel: { nome: 'José', cpf: '39053344705' } },
   ];
   es.configurado = () => true;
   es.todasEmpresas = async () => lista;
   try {
     const r1 = await sincronizacaoDiaria({ forcar: true });
-    assert.deepStrictEqual([r1.recebidas, r1.novas, r1.atualizadas, r1.ignoradas, r1.bloqueadas], [5, 2, 1, 1, 1]);
+    // todas as liberadas entram: sem documento válido ou com documento repetido ganham código ES + id
+    assert.deepStrictEqual([r1.recebidas, r1.novas, r1.atualizadas, r1.ignoradas, r1.bloqueadas], [6, 4, 1, 0, 1]);
+    for (const cod of ['ES903', 'es906']) {
+      const [sc, rc] = await j('POST', '/auth/login', { login: cod, senha: 'urban1234' });
+      assert.strictEqual(sc, 200, `empresa sem documento próprio entra com o código ${cod}`);
+      assert.strictEqual(rc.usuario.trocar_senha, true);
+    }
     const [spf, rpf] = await j('POST', '/auth/login', { login: '390.533.447-05', senha: 'urban1234' });
     assert.strictEqual(spf, 200, 'empregador pessoa física entra pelo CPF');
     assert.strictEqual(rpf.usuario.perfil, 'empresa');
@@ -206,7 +214,7 @@ test('sincronização diária com o eSocial grava só empresas novas ou alterada
     assert.strictEqual(db.prepare('SELECT telefone FROM empresas WHERE id = ?').get(hz.id).telefone, '(44) 99999-1111');
     // nada mudou no eSocial → nada é gravado
     const r2 = await sincronizacaoDiaria({ forcar: true });
-    assert.deepStrictEqual([r2.novas, r2.atualizadas, r2.sem_mudanca], [0, 0, 3]);
+    assert.deepStrictEqual([r2.novas, r2.atualizadas, r2.sem_mudanca], [0, 0, 5]);
     // fora do horário/no mesmo dia, a rotina automática não roda de novo
     assert.strictEqual(await sincronizacaoDiaria(), null);
     // empresa nova já entra com o CNPJ e a senha inicial

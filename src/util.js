@@ -47,7 +47,9 @@ function validaCNPJ(cnpj) {
 
 const fmtCPF = (s) => digits(s).replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
 /** Documento da empresa: CNPJ (14 dígitos) ou CPF (11 dígitos, empregador pessoa física). */
-const fmtCNPJ = (s) => (digits(s).length === 11
+/** Código de acesso gerado para empresa do eSocial sem CNPJ/CPF próprio: "ES" + id do eSocial. */
+const ehCodigoAcesso = (s) => /^ES\d+$/i.test(String(s || '').trim());
+const fmtCNPJ = (s) => (ehCodigoAcesso(s) ? String(s).trim().toUpperCase() : digits(s).length === 11
   ? digits(s).replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
   : digits(s).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5'));
 const validaDocumento = (s) => (digits(s).length === 11 ? validaCPF(s) : validaCNPJ(s));
@@ -114,6 +116,6 @@ function pick(obj, keys) {
 }
 
 module.exports = {
-  HttpError, httpError, h, digits, validaCPF, validaCNPJ, validaDocumento, fmtCPF, fmtCNPJ, fmtMoeda, fmtData,
+  HttpError, httpError, h, digits, validaCPF, validaCNPJ, validaDocumento, ehCodigoAcesso, fmtCPF, fmtCNPJ, fmtMoeda, fmtData,
   isoLocal, hoje, agoraISO, addDias, addMeses, diasEntre, dataHora, isISODate, gerarCodigo, exigir, pick,
 };

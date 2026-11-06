@@ -74,6 +74,35 @@ crud('tipos-exame', 'tipos_exame', ['codigo', 'nome', 'categoria', 'descricao', 
   },
 });
 
+/* Riscos ocupacionais por função (PGR) de cada empresa */
+const svc = () => require('../services');
+const empresaOu404 = (id) => {
+  const e = db.prepare('SELECT id, razao_social, cnpj, esocial_id FROM empresas WHERE id = ?').get(Number(id));
+  if (!e) throw httpError(404, 'Empresa não encontrada');
+  return e;
+};
+router.get('/empresas/:id/riscos', h((req, res) => {
+  const e = empresaOu404(req.params.id);
+  res.json({
+    empresa: e,
+    esocial: require('../esocial').configurado(),
+    funcoes: db.prepare('SELECT * FROM riscos_funcao WHERE empresa_id = ? ORDER BY funcao').all(e.id),
+  });
+}));
+router.post('/empresas/:id/riscos', h((req, res) => {
+  const e = empresaOu404(req.params.id);
+  res.status(201).json(svc().salvarRiscoFuncao(e.id, req.body || {}));
+}));
+router.delete('/empresas/:id/riscos/:rid', h((req, res) => {
+  const e = empresaOu404(req.params.id);
+  db.prepare('DELETE FROM riscos_funcao WHERE id = ? AND empresa_id = ?').run(Number(req.params.rid), e.id);
+  res.json({ ok: true });
+}));
+router.post('/empresas/:id/riscos/importar-esocial', h(async (req, res) => {
+  const e = empresaOu404(req.params.id);
+  res.json(await svc().importarFuncoesEsocial(e.id));
+}));
+
 /* Usuários (senha tratada à parte) */
 router.get('/usuarios', h((req, res) => {
   res.json(db.prepare(

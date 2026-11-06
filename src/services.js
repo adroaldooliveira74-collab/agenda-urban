@@ -321,10 +321,93 @@ function criarAgendamento(user, body) {
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Riscos ocupacionais por função (PGR)                                 */
+/* ------------------------------------------------------------------ */
+
+const CATEGORIAS_RISCO = [
+  ['fisicos', 'Físicos'], ['quimicos', 'Químicos'], ['biologicos', 'Biológicos'], ['ergonomicos', 'Ergonômicos'], ['acidentes', 'Acidentes'],
+];
+
+/** Normaliza o nome da função para comparar ("Aux. de Pedreiro" = "AUX DE PEDREIRO"). */
+const normFuncao = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+
+/** Texto dos riscos, uma categoria por linha; vazio se nada cadastrado. */
+function textoRiscos(r) {
+  if (!r) return '';
+  return CATEGORIAS_RISCO.filter(([k]) => String(r[k] || '').trim()).map(([k, rot]) => `${rot}: ${String(r[k]).trim()}`).join('\n');
+}
+
+function riscoCadastrado(empresaId, funcao) {
+  if (!funcao) return null;
+  return db.prepare('SELECT * FROM riscos_funcao WHERE empresa_id = ? AND funcao_norm = ?').get(empresaId, normFuncao(funcao)) || null;
+}
+
+function salvarRiscoFuncao(empresaId, dados, origem = 'manual') {
+  const funcao = String(dados.funcao || '').trim();
+  if (!funcao) throw httpError(400, 'Informe a função');
+  const v = Object.fromEntries(CATEGORIAS_RISCO.map(([k]) => [k, String(dados[k] || '').trim() || null]));
+  db.prepare(
+    `INSERT INTO riscos_funcao (empresa_id, funcao, funcao_norm, fisicos, quimicos, biologicos, ergonomicos, acidentes, origem)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(empresa_id, funcao_norm) DO UPDATE SET funcao = excluded.funcao, fisicos = excluded.fisicos, quimicos = excluded.quimicos,
+       biologicos = excluded.biologicos, ergonomicos = excluded.ergonomicos, acidentes = excluded.acidentes, updated_at = datetime('now','localtime')`,
+  ).run(empresaId, funcao, normFuncao(funcao), v.fisicos, v.quimicos, v.biologicos, v.ergonomicos, v.acidentes, origem);
+  return db.prepare('SELECT * FROM riscos_funcao WHERE empresa_id = ? AND funcao_norm = ?').get(empresaId, normFuncao(funcao));
+}
+
+/** Liga a empresa ao cadastro do eSocial Brasil (pelo CNPJ) e guarda o id. */
+async function esocialIdDaEmpresa(empresaId) {
+  const esocial = require('./esocial');
+  const e = db.prepare('SELECT id, cnpj, esocial_id FROM empresas WHERE id = ?').get(empresaId);
+  if (!e) return null;
+  if (e.esocial_id) return e.esocial_id;
+  if (!esocial.configurado()) return null;
+  const es = await esocial.empresaPorCnpj(e.cnpj);
+  if (es) db.prepare('UPDATE empresas SET esocial_id = ? WHERE id = ?').run(es.id, empresaId);
+  return es ? es.id : null;
+}
+
+/**
+ * Riscos da função do exame: procura a função informada no cadastro da empresa;
+ * se não achar, usa a função registrada no eSocial Brasil para o CPF.
+ * Sem cadastro → texto vazio (riscos em branco na guia e no ASO).
+ */
+async function resolverRiscos(ag) {
+  const funcao = ag.tipo_codigo === 'mudanca_funcao' && ag.funcao_nova ? ag.funcao_nova : ag.funcao_atual || ag.func_funcao;
+  let r = riscoCadastrado(ag.empresa_id, funcao);
+  if (!r && ag.tipo_codigo !== 'mudanca_funcao') {
+    try {
+      const esId = await esocialIdDaEmpresa(ag.empresa_id);
+      const emp = esId ? await require('./esocial').empregado(esId, ag.func_cpf) : null;
+      if (emp && emp.funcao) r = riscoCadastrado(ag.empresa_id, emp.funcao);
+    } catch (e) {
+      console.error('[esocial]', e.message);
+    }
+  }
+  return textoRiscos(r);
+}
+
+/** Cria (em branco) no cadastro de riscos as funções que a empresa tem no eSocial Brasil. */
+async function importarFuncoesEsocial(empresaId) {
+  const esocial = require('./esocial');
+  if (!esocial.configurado()) throw httpError(400, 'Integração com o eSocial Brasil não configurada (ESOCIAL_TOKEN)');
+  const esId = await esocialIdDaEmpresa(empresaId);
+  if (!esId) throw httpError(404, 'Empresa não encontrada no eSocial Brasil pelo CNPJ');
+  const funcoes = await esocial.funcoesDaEmpresa(esId);
+  let novas = 0;
+  for (const f of funcoes) {
+    if (!riscoCadastrado(empresaId, f)) { salvarRiscoFuncao(empresaId, { funcao: f }, 'esocial'); novas++; }
+  }
+  return { encontradas: funcoes.length, novas };
+}
+
 /** Gera a guia em PDF, registra o documento e dispara os envios. */
 async function finalizarAgendamento(id, { evento = 'novo' } = {}) {
   const { gerarGuia } = require('./pdf');
   const notify = require('./notify');
+  const pre = buscarAgendamento(id);
+  if (!pre.aso_id) db.prepare('UPDATE agendamentos SET riscos = ? WHERE id = ?').run(await resolverRiscos(pre), id);
   const ag = buscarAgendamento(id);
   const arquivo = await gerarGuia(ag, { fin: dadosFinanceiros(db.prepare('SELECT * FROM clinicas WHERE id = ?').get(ag.clinica_id)), maps: mapsUrl(clinicaDe(ag)) });
   db.prepare('UPDATE agendamentos SET guia_path = ? WHERE id = ?').run(arquivo, id);
@@ -423,7 +506,7 @@ async function emitirASO(user, agendamentoId, body) {
       db.prepare(
         `INSERT INTO asos (agendamento_id, funcionario_id, empresa_id, medico_id, tipo_exame_id, funcao, riscos, exames_realizados, conclusao, restricoes, observacoes, data_emissao, data_validade, emitido_por)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(agendamentoId, ag.funcionario_id, ag.empresa_id, medicoId, tipo.id, funcao, body.riscos || 'Ausência de riscos ocupacionais específicos',
+      ).run(agendamentoId, ag.funcionario_id, ag.empresa_id, medicoId, tipo.id, funcao, String(body.riscos ?? ag.riscos ?? '').trim(),
         exames, body.conclusao, body.restricoes || null, body.observacoes || null, emissao, validade, user.id).lastInsertRowid,
     );
     db.prepare(`UPDATE agendamentos SET status = 'realizado', medico_id = ?, updated_at = ? WHERE id = ?`).run(medicoId, agoraISO(), agendamentoId);
@@ -537,5 +620,5 @@ module.exports = {
   AG_SELECT, buscarAgendamento, checarAcessoAgendamento, clinicaDoMedico, tipoPorCodigoOuId, precoExame, dadosFinanceiros, mapsUrl,
   horariosDisponiveis, datasDisponiveis, clinicasDisponiveis, sugerirTipo, salvarEmpresa, salvarFuncionario, registrarHistorico,
   criarAgendamento, finalizarAgendamento, reagendar, buscarASO, emitirASO, assinarASO, gerarArquivoASO, vencimentos, ultimoASO,
-  payloadPixAgendamento,
+  payloadPixAgendamento, CATEGORIAS_RISCO, normFuncao, textoRiscos, riscoCadastrado, salvarRiscoFuncao, resolverRiscos, importarFuncoesEsocial,
 };

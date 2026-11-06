@@ -8,6 +8,7 @@ const path = require('node:path');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'urbanclin-'));
 process.env.DATA_DIR = dir;
+process.env.NODE_ENV = 'test'; // não chama a API real do eSocial Brasil
 const app = require('../src/server');
 const { db } = require('../src/db');
 const { gerarPayloadPix, crc16 } = require('../src/pix');
@@ -94,6 +95,48 @@ test('fluxo completo NR-7', async () => {
   const [, func] = await j('GET', `/funcionarios/${ag.funcionario_id}`, null, te);
   assert.ok(func.historico.some((h) => h.evento === 'admissao'));
   assert.strictEqual(func.asos.length, 1);
+});
+
+test('riscos da função cadastrada saem na guia e no ASO; sem cadastro saem em branco', async () => {
+  const te = await login('empresa@horizonte.com.br', 'empresa123');
+  const ta = await login('admin@urbanclin.com.br', 'admin123');
+  const tc = await login('clinica@urbanclin.com.br', 'clinica123');
+  const tm = await login('medico@urbanclin.com.br', 'medico123');
+  const emp = db.prepare("SELECT id FROM empresas WHERE email = 'rh@horizonte.com.br'").get();
+
+  // cadastro pela tela de administração; a comparação ignora acentos, pontos e maiúsculas
+  const [sr] = await j('POST', `/admin/empresas/${emp.id}/riscos`, { funcao: 'Aux. de Pedreiro', fisicos: 'Ruído', acidentes: 'Queda de altura' }, ta);
+  assert.strictEqual(sr, 201);
+  const [, lista] = await j('GET', `/admin/empresas/${emp.id}/riscos`, null, ta);
+  assert.ok(lista.funcoes.some((f) => f.funcao === 'Aux. de Pedreiro'));
+
+  async function agendar(cpf, funcao) {
+    const [, clinicas] = await j('GET', '/clinicas?tipo=admissional', null, te);
+    const [, datas] = await j('GET', `/clinicas/${clinicas[0].id}/datas`, null, te);
+    const [, horas] = await j('GET', `/clinicas/${clinicas[0].id}/horarios?data=${datas[1].data}`, null, te);
+    const [st, ag] = await j('POST', '/agendamentos', {
+      tipo_exame: 'admissional', clinica_id: clinicas[0].id, data: datas[1].data, hora: horas[0],
+      funcionario: { nome: `Teste ${funcao}`, rg: '1', cpf, telefone: '(11) 91234-5678', data_nascimento: '1990-01-01', funcao },
+    }, te);
+    assert.strictEqual(st, 201, JSON.stringify(ag));
+    return ag;
+  }
+
+  const com = await agendar('111.444.777-35', 'AUX DE PEDREIRO');
+  assert.strictEqual(com.riscos, 'Físicos: Ruído\nAcidentes: Queda de altura');
+  const sem = await agendar('390.533.447-05', 'Função Sem Cadastro');
+  assert.strictEqual(sem.riscos, '');
+
+  for (const ag of [com, sem]) {
+    db.prepare("UPDATE agendamentos SET data = date('now','localtime') WHERE id = ?").run(ag.id);
+    await j('POST', `/agendamentos/${ag.id}/pagamento`, { acao: 'confirmar' }, tc);
+    await j('POST', `/agendamentos/${ag.id}/status`, { status: 'compareceu' }, tc);
+  }
+  const [, aso1] = await j('POST', `/agendamentos/${com.id}/aso`, { conclusao: 'apto' }, tm);
+  assert.strictEqual(aso1.riscos, 'Físicos: Ruído\nAcidentes: Queda de altura');
+  const [, aso2] = await j('POST', `/agendamentos/${sem.id}/aso`, { conclusao: 'apto' }, tm);
+  assert.strictEqual(aso2.riscos, '');
+  assert.ok(fs.existsSync(path.join(dir, aso2.arquivo || com.guia_path)));
 });
 
 test('perfis não acessam rotas de outros perfis', async () => {

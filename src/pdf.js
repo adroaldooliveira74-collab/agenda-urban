@@ -107,6 +107,9 @@ async function gerarGuia(ag, { fin, maps }) {
     ['Data', fmtData(ag.data)], ['Horário', ag.hora],
   ]);
 
+  secao(doc, 'Riscos Ocupacionais da Função');
+  blocoRiscos(doc, ag.riscos);
+
   secao(doc, 'Dados da Clínica');
   campos(doc, [
     ['Nome da Clínica', ag.clinica_nome], ['Telefone', ag.clinica_telefone],
@@ -173,6 +176,23 @@ const TIPOS_ASO = [
 ];
 const CONCLUSOES = [['apto', 'APTO'], ['apto_com_restricao', 'APTO COM RESTRIÇÃO'], ['inapto', 'INAPTO']];
 
+/** Riscos cadastrados (uma categoria por linha) ou linhas em branco para preenchimento. */
+function blocoRiscos(doc, texto) {
+  const largura = doc.page.width - 92;
+  if (String(texto || '').trim()) {
+    doc.font('Helvetica').fontSize(9.5).fillColor('#000000').text(String(texto).trim(), 46, doc.y, { width: largura, lineGap: 1 });
+    return;
+  }
+  doc.moveDown(0.6);
+  for (let i = 0; i < 2; i++) {
+    const y = doc.y + 10;
+    doc.lineWidth(0.5).moveTo(46, y).lineTo(46 + largura, y).stroke('#9a9a9a');
+    doc.y = y + 4;
+  }
+  doc.lineWidth(1).fillColor('#000000');
+  doc.x = 40;
+}
+
 function caixas(doc, opcoes, marcado) {
   let x = 46;
   const y = doc.y;
@@ -204,7 +224,7 @@ async function gerarASOPdf(aso) {
   caixas(doc, TIPOS_ASO, aso.tipo_codigo);
 
   secao(doc, 'Riscos Ocupacionais');
-  doc.font('Helvetica').fontSize(10).text(aso.riscos || '—', 46, doc.y, { width: doc.page.width - 92 });
+  blocoRiscos(doc, aso.riscos);
 
   secao(doc, 'Procedimentos / Exames Realizados');
   doc.font('Helvetica').fontSize(10).text(`Exame clínico em ${fmtData(aso.exame_data)}. ${aso.exames_realizados || ''}`, 46, doc.y, { width: doc.page.width - 92 });

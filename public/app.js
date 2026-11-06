@@ -491,7 +491,7 @@ async function modalASO(a) {
   modal(`Emitir ASO — ${a.tipo_nome}`, `<div class="form">
     ${S.me.perfil === 'clinica' ? campo({ k: 'medico_id', rot: 'Médico responsável', tipo: 'select', req: true, val: a.medico_id, opcoes: [['', 'Selecione…'], ...medicos.map((m) => [m.id, `${m.nome} — CRM ${m.crm}/${m.uf_crm}`])] }) : ''}
     ${campo({ k: 'conclusao', rot: 'Conclusão', tipo: 'select', req: true, opcoes: [['apto', 'Apto'], ['apto_com_restricao', 'Apto com restrição'], ['inapto', 'Inapto']] })}
-    ${campo({ k: 'riscos', rot: 'Riscos ocupacionais', full: true, val: 'Conforme PGR da empresa' })}
+    ${campo({ k: 'riscos', rot: a.riscos ? 'Riscos ocupacionais (cadastro da função)' : 'Riscos ocupacionais (função sem cadastro — sairá em branco)', tipo: 'textarea', full: true, val: a.riscos || '' })}
     ${campo({ k: 'exames_realizados', rot: 'Exames realizados', tipo: 'textarea', full: true, val: exames || 'Exame clínico ocupacional' })}
     ${campo({ k: 'restricoes', rot: 'Restrições (se houver)', full: true })}
     ${campo({ k: 'observacoes', rot: 'Observações', tipo: 'textarea', full: true })}
@@ -828,9 +828,56 @@ const ativoTag = (l) => (l.ativo ? '<span class="tag ok">Ativo</span>' : '<span 
 
 ROTAS.empresas = crudPage({
   titulo: 'Empresas', endpoint: '/admin/empresas',
-  colunas: [['Razão social', (l) => esc(l.razao_social)], ['CNPJ', (l) => esc(fmtCNPJ(l.cnpj))], ['Responsável', (l) => esc(l.responsavel)], ['Contato', (l) => `${esc(l.telefone)}<div class="small muted">${esc(l.email)}</div>`], ['', ativoTag]],
+  colunas: [['Razão social', (l) => esc(l.razao_social)], ['CNPJ', (l) => esc(fmtCNPJ(l.cnpj))], ['Responsável', (l) => esc(l.responsavel)], ['Contato', (l) => `${esc(l.telefone)}<div class="small muted">${esc(l.email)}</div>`], ['', ativoTag],
+    ['', (l) => `<button class="btn" data-riscos="${l.id}">Riscos por função</button>`]],
   campos: [{ k: 'cnpj', rot: 'CNPJ', req: true }, { k: 'razao_social', rot: 'Razão Social', req: true }, { k: 'responsavel', rot: 'Responsável', req: true },
     { k: 'telefone', rot: 'Telefone', req: true }, { k: 'email', rot: 'E-mail', tipo: 'email', req: true }, { k: 'ativo', rot: 'Situação', tipo: 'select', opcoes: ativoOp, padrao: '1' }],
+});
+
+/* Riscos ocupacionais por função (PGR) da empresa */
+const CAT_RISCO = [['fisicos', 'Físicos'], ['quimicos', 'Químicos'], ['biologicos', 'Biológicos'], ['ergonomicos', 'Ergonômicos'], ['acidentes', 'Acidentes']];
+
+async function modalRiscos(empresaId) {
+  const d = await api('GET', `/admin/empresas/${empresaId}/riscos`);
+  const resumo = (f) => CAT_RISCO.filter(([k]) => f[k]).map(([k, r]) => `<b>${r}:</b> ${esc(f[k])}`).join('<br>') || '<span class="tag warn">Sem riscos — sai em branco</span>';
+  const corpo = `<p class="muted small">Quando a função do funcionário estiver aqui, a guia e o ASO já saem com estes riscos. Função sem cadastro sai com os riscos em branco.</p>
+    <div class="acoes" style="margin-bottom:10px">
+      <button class="btn primary" id="rf-novo">+ Nova função</button>
+      ${d.esocial ? '<button class="btn" id="rf-imp">Trazer funções do eSocial Brasil</button>' : '<span class="small muted">eSocial Brasil não configurado (ESOCIAL_TOKEN)</span>'}
+    </div>
+    ${tabela([
+      ['Função', (f) => `${esc(f.funcao)}${f.origem === 'esocial' ? '<div class="small muted">vinda do eSocial</div>' : ''}`],
+      ['Riscos', resumo],
+      ['', (f) => `<button class="btn" data-rf-del="${f.id}">Excluir</button>`],
+    ], d.funcoes, { onClick: (f) => editar(f), vazio: 'Nenhuma função cadastrada.' })}`;
+  const m = modal(`Riscos por função — ${d.empresa.razao_social}`, corpo, { largura: 860 });
+  const reabrir = () => { m.fechar(); modalRiscos(empresaId); };
+  const editar = (f) => modal(f ? `Riscos — ${f.funcao}` : 'Nova função', `<div class="form">
+      ${campo({ k: 'funcao', rot: 'Função', req: true, full: true, val: f ? f.funcao : '' })}
+      ${CAT_RISCO.map(([k, r]) => campo({ k, rot: `Riscos ${r.toLowerCase()}`, tipo: 'textarea', full: true, val: f ? f[k] : '' })).join('')}
+    </div>`, {
+    largura: 720,
+    onConfirm: async (mm) => { await api('POST', `/admin/empresas/${empresaId}/riscos`, valoresForm(mm)); toast('Riscos salvos', 'ok'); reabrir(); },
+  });
+  $('#rf-novo', m.el).addEventListener('click', () => editar(null));
+  const imp = $('#rf-imp', m.el);
+  if (imp) imp.addEventListener('click', async () => {
+    imp.disabled = true;
+    try {
+      const r = await api('POST', `/admin/empresas/${empresaId}/riscos/importar-esocial`);
+      toast(`${r.encontradas} função(ões) no eSocial, ${r.novas} nova(s). Preencha os riscos de cada uma.`, 'ok');
+      reabrir();
+    } catch (e) { toast(e.message, 'erro'); imp.disabled = false; }
+  });
+  $$('[data-rf-del]', m.el).forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Excluir esta função do cadastro de riscos?')) return;
+    await api('DELETE', `/admin/empresas/${empresaId}/riscos/${b.dataset.rfDel}`);
+    reabrir();
+  }));
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-riscos]');
+  if (b) { e.stopPropagation(); modalRiscos(b.dataset.riscos).catch((err) => toast(err.message, 'erro')); }
 });
 
 ROTAS.clinicas = crudPage({

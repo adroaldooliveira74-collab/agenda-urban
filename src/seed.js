@@ -88,6 +88,12 @@ function semearDemo() {
   usuario.run('Marcos Pereira', 'empresa@horizonte.com.br', hashSenha('empresa123'), 'empresa', e1, null, null);
   usuario.run('Juliana Costa', 'empresa@lograpida.com.br', hashSenha('empresa123'), 'empresa', e2, null, null);
 
+  // Riscos por função (PGR) de demonstração; funções sem cadastro saem em branco
+  const { salvarRiscoFuncao } = require('./services');
+  salvarRiscoFuncao(e1, { funcao: 'Pedreiro', fisicos: 'Ruído; Radiação não ionizante (exposição solar)', quimicos: 'Poeira de cimento; Sílica', ergonomicos: 'Levantamento e transporte manual de peso; Postura inadequada', acidentes: 'Queda de altura; Queda de materiais' });
+  salvarRiscoFuncao(e1, { funcao: 'Eletricista', acidentes: 'Choque elétrico; Queda de altura', ergonomicos: 'Postura inadequada' });
+  salvarRiscoFuncao(e2, { funcao: 'Motorista', fisicos: 'Vibração de corpo inteiro; Ruído', ergonomicos: 'Postura sentada por longos períodos; Jornada prolongada', acidentes: 'Acidente de trânsito' });
+
   const pessoas = [
     [e1, 'Carlos Eduardo Silva', 'Pedreiro', '1980-04-12'], [e1, 'Ana Paula Souza', 'Engenheira Civil', '1990-09-03'],
     [e1, 'José Ribeiro Santos', 'Eletricista', '1985-01-22'], [e1, 'Fernanda Lima', 'Técnica de Segurança', '1993-06-15'],

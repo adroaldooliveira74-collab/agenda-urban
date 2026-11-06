@@ -220,7 +220,30 @@ CREATE TABLE IF NOT EXISTS alertas_enviados (
   chave TEXT PRIMARY KEY,
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+
+-- Riscos ocupacionais por função (PGR) de cada empresa
+CREATE TABLE IF NOT EXISTS riscos_funcao (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  empresa_id INTEGER NOT NULL REFERENCES empresas(id),
+  funcao TEXT NOT NULL,
+  funcao_norm TEXT NOT NULL,
+  fisicos TEXT,
+  quimicos TEXT,
+  biologicos TEXT,
+  ergonomicos TEXT,
+  acidentes TEXT,
+  origem TEXT NOT NULL DEFAULT 'manual',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  UNIQUE (empresa_id, funcao_norm)
+);
 `);
+
+/* Migrações simples para bancos já existentes */
+function addColuna(tabela, coluna, tipo) {
+  if (!db.prepare(`PRAGMA table_info(${tabela})`).all().some((c) => c.name === coluna)) db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${coluna} ${tipo}`);
+}
+addColuna('agendamentos', 'riscos', 'TEXT');
+addColuna('empresas', 'esocial_id', 'INTEGER');
 
 /** Executa fn dentro de uma transação. */
 function tx(fn) {

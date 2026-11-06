@@ -300,6 +300,62 @@ async function entrar(identificador, senha) {
   return u;
 }
 
+/* ------------------------------------------------------------------ */
+/* Sincronização noturna das empresas com o eSocial Brasil              */
+/* ------------------------------------------------------------------ */
+
+/** Dados da empresa no formato local + impressão digital para saber se mudou. */
+function dadosEsocial(es) {
+  const r = es.responsavel || {};
+  const d = {
+    cnpj: digits(es.cnpj),
+    razao_social: String(es.razao_social || es.nome || '').trim(),
+    responsavel: String(r.nome || '').trim(),
+    telefone: String(es.telefone || r.celular || r.telefone || '').trim(),
+    email: String(es.email || r.email || '').trim(),
+  };
+  d.hash = crypto.createHash('sha1').update(JSON.stringify([d.cnpj, d.razao_social, d.responsavel, d.telefone, d.email])).digest('hex');
+  return d;
+}
+
+/**
+ * Baixa a lista de empresas do eSocial Brasil e grava SÓ o que é novo ou mudou:
+ * empresa nova → cadastro + acesso (CNPJ/CPF e senha inicial); empresa com dados
+ * alterados → atualiza; igual → não mexe. Campos vazios no eSocial não apagam os daqui.
+ */
+async function sincronizarEmpresasEsocial() {
+  const esocial = require('./esocial');
+  if (!esocial.configurado()) return { pulado: 'eSocial Brasil não configurado' };
+  const lista = await esocial.todasEmpresas();
+  const res = { recebidas: lista.length, novas: 0, atualizadas: 0, sem_mudanca: 0, ignoradas: 0, repetidas: 0 };
+  const vistos = new Set();
+  tx(() => {
+    for (const es of lista) {
+      const d = dadosEsocial(es);
+      if (!validaDocumento(d.cnpj) || !d.razao_social) { res.ignoradas++; continue; }
+      // o mesmo CNPJ pode vir mais de uma vez na lista: vale o primeiro, para não regravar toda noite
+      if (vistos.has(d.cnpj)) { res.repetidas++; continue; }
+      vistos.add(d.cnpj);
+      const local = db.prepare('SELECT * FROM empresas WHERE cnpj = ?').get(d.cnpj);
+      if (!local) {
+        const id = Number(db.prepare(
+          'INSERT INTO empresas (cnpj, razao_social, responsavel, telefone, email, esocial_id, esocial_hash) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        ).run(d.cnpj, d.razao_social, d.responsavel || d.razao_social, d.telefone, d.email, es.id, d.hash).lastInsertRowid);
+        garantirAcessoEmpresa(id);
+        res.novas++;
+      } else if (local.esocial_hash !== d.hash || local.esocial_id !== es.id) {
+        db.prepare(
+          `UPDATE empresas SET razao_social = ?, responsavel = COALESCE(NULLIF(?, ''), responsavel), telefone = COALESCE(NULLIF(?, ''), telefone),
+             email = COALESCE(NULLIF(?, ''), email), esocial_id = ?, esocial_hash = ? WHERE id = ?`,
+        ).run(d.razao_social, d.responsavel, d.telefone, d.email, es.id, d.hash, local.id);
+        garantirAcessoEmpresa(local.id);
+        res.atualizadas++;
+      } else res.sem_mudanca++;
+    }
+  });
+  return res;
+}
+
 /** Admin da consultoria: e-mail da conta, senha inicial, troca no 1º acesso. */
 function garantirAdminConsultoria() {
   const { hashSenha } = require('./auth');
@@ -702,5 +758,5 @@ module.exports = {
   horariosDisponiveis, datasDisponiveis, clinicasDisponiveis, sugerirTipo, salvarEmpresa, salvarFuncionario, registrarHistorico,
   criarAgendamento, finalizarAgendamento, reagendar, buscarASO, emitirASO, assinarASO, gerarArquivoASO, vencimentos, ultimoASO,
   payloadPixAgendamento, CATEGORIAS_RISCO, normFuncao, textoRiscos, riscoCadastrado, salvarRiscoFuncao, resolverRiscos, importarFuncoesEsocial,
-  SENHA_INICIAL, garantirAcessoEmpresa, entrar, garantirAdminConsultoria,
+  SENHA_INICIAL, garantirAcessoEmpresa, entrar, garantirAdminConsultoria, sincronizarEmpresasEsocial,
 };

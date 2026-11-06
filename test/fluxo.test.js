@@ -180,6 +180,36 @@ test('login por CNPJ/CPF com senha inicial e troca obrigatória no primeiro aces
   assert.strictEqual((await j('POST', '/auth/login', { login: 'admin@urbanclin.com.br', senha: 'admin123' }))[0], 401);
 });
 
+test('sincronização diária com o eSocial grava só empresas novas ou alteradas', async () => {
+  const es = require('../src/esocial');
+  const original = { configurado: es.configurado, todasEmpresas: es.todasEmpresas };
+  const { sincronizacaoDiaria } = require('../src/scheduler');
+  const hz = db.prepare("SELECT * FROM empresas WHERE email = 'rh@horizonte.com.br'").get();
+  const lista = [
+    { id: 901, cnpj: '11.444.777/0001-61', razao_social: 'Nova Empresa do eSocial Ltda', telefone: '(44) 3000-0000', email: 'nova@exemplo.com', responsavel: { nome: 'Maria' } },
+    { id: 902, cnpj: hz.cnpj, razao_social: hz.razao_social, telefone: '(44) 99999-1111', email: hz.email, responsavel: { nome: hz.responsavel } },
+    { id: 903, cnpj: '123', razao_social: 'Documento inválido' },
+  ];
+  es.configurado = () => true;
+  es.todasEmpresas = async () => lista;
+  try {
+    const r1 = await sincronizacaoDiaria({ forcar: true });
+    assert.deepStrictEqual([r1.recebidas, r1.novas, r1.atualizadas, r1.ignoradas], [3, 1, 1, 1]);
+    assert.strictEqual(db.prepare('SELECT telefone FROM empresas WHERE id = ?').get(hz.id).telefone, '(44) 99999-1111');
+    // nada mudou no eSocial → nada é gravado
+    const r2 = await sincronizacaoDiaria({ forcar: true });
+    assert.deepStrictEqual([r2.novas, r2.atualizadas, r2.sem_mudanca], [0, 0, 2]);
+    // fora do horário/no mesmo dia, a rotina automática não roda de novo
+    assert.strictEqual(await sincronizacaoDiaria(), null);
+    // empresa nova já entra com o CNPJ e a senha inicial
+    const [st, r] = await j('POST', '/auth/login', { login: '11444777000161', senha: 'urban1234' });
+    assert.strictEqual(st, 200);
+    assert.strictEqual(r.usuario.trocar_senha, true);
+  } finally {
+    Object.assign(es, original);
+  }
+});
+
 test('perfis não acessam rotas de outros perfis', async () => {
   const te = await login(cnpjHz(), 'urban1234');
   assert.strictEqual((await j('GET', '/admin/empresas', null, te))[0], 403);

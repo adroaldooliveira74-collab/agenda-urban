@@ -86,11 +86,44 @@ async function rodar() {
   }
 }
 
+/**
+ * Sincronização diária das empresas com o eSocial Brasil (padrão 00:00, ESOCIAL_SYNC_HORA).
+ * Roda uma vez por dia: se o servidor estava parado no horário, roda assim que voltar.
+ */
+let sincronizando = false;
+async function sincronizacaoDiaria({ forcar = false } = {}) {
+  const { getConfig, setConfig } = require('./db');
+  const { sincronizarEmpresasEsocial } = require('./services');
+  const [hh, mm] = String(process.env.ESOCIAL_SYNC_HORA || '00:00').split(':').map(Number);
+  const agora = new Date();
+  const hojeLocal = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}-${String(agora.getDate()).padStart(2, '0')}`;
+  const passouHora = agora.getHours() * 60 + agora.getMinutes() >= hh * 60 + (mm || 0);
+  if (sincronizando || (!forcar && (!passouHora || getConfig('esocial_sync_dia') === hojeLocal))) return null;
+  sincronizando = true;
+  try {
+    const r = await sincronizarEmpresasEsocial();
+    if (!r.pulado) {
+      setConfig('esocial_sync_dia', hojeLocal);
+      setConfig('esocial_sync_resultado', JSON.stringify({ ...r, em: agora.toISOString() }));
+      console.log(`[esocial] sincronização: ${r.recebidas} recebidas, ${r.novas} novas, ${r.atualizadas} atualizadas, ${r.sem_mudanca} sem mudança`);
+    }
+    return r;
+  } catch (e) {
+    console.error('[esocial] sincronização falhou:', e.message);
+    return { erro: e.message };
+  } finally {
+    sincronizando = false;
+  }
+}
+
 function iniciar() {
   const minutos = Number(process.env.ALERTAS_INTERVALO_MIN || 15);
   setTimeout(rodar, 5000).unref();
   setInterval(rodar, minutos * 60 * 1000).unref();
   console.log(`[alertas] rotina automática a cada ${minutos} min`);
+  setTimeout(sincronizacaoDiaria, 15000).unref();
+  setInterval(sincronizacaoDiaria, 5 * 60 * 1000).unref();
+  console.log(`[esocial] sincronização diária das empresas às ${process.env.ESOCIAL_SYNC_HORA || '00:00'}`);
 }
 
-module.exports = { iniciar, rodar, alertasVencimento, lembretesAgendamento, marcarAusentes };
+module.exports = { iniciar, rodar, alertasVencimento, lembretesAgendamento, marcarAusentes, sincronizacaoDiaria };

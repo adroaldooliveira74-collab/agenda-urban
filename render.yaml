@@ -25,3 +25,8 @@ services:
         value: "15"
       - key: ESOCIAL_TOKEN
         sync: false
+      # horário de Brasília (o Render usa UTC): sincronização às 00:00 daqui
+      - key: TZ
+        value: America/Sao_Paulo
+      - key: ESOCIAL_SYNC_HORA
+        value: "00:00"

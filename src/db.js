@@ -244,6 +244,7 @@ function addColuna(tabela, coluna, tipo) {
 }
 addColuna('agendamentos', 'riscos', 'TEXT');
 addColuna('empresas', 'esocial_id', 'INTEGER');
+addColuna('empresas', 'esocial_hash', 'TEXT'); // "impressão digital" dos dados vindos do eSocial (sincronização)
 // Login das empresas pelo CNPJ/CPF e troca obrigatória da senha inicial
 addColuna('usuarios', 'login', 'TEXT');
 addColuna('usuarios', 'trocar_senha', 'INTEGER NOT NULL DEFAULT 0');

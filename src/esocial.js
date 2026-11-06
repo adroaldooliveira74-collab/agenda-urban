@@ -66,4 +66,16 @@ async function funcoesDaEmpresa(esEmpresaId, { maxPaginas = 20 } = {}) {
   return [...funcoes.values()].sort();
 }
 
-module.exports = { configurado, empresaPorCnpj, empregado, funcoesDaEmpresa };
+/** Todas as empresas-clientes da consultoria (50 por página, a API não filtra por data). */
+async function todasEmpresas({ maxPaginas = 100 } = {}) {
+  const lista = [];
+  for (let p = 1; p <= maxPaginas; p++) {
+    const d = await get(`/empresas?per_page=50&page=${p}`);
+    if (!d || !d.data) break;
+    lista.push(...d.data);
+    if (!d.next_page_url) break;
+  }
+  return lista;
+}
+
+module.exports = { configurado, empresaPorCnpj, empregado, funcoesDaEmpresa, todasEmpresas };

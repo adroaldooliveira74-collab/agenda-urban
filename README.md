@@ -15,14 +15,22 @@ npm start
 
 Acesse <http://localhost:3000>. No primeiro início o banco é criado em `data/` com dados de demonstração.
 
-| Perfil | E-mail | Senha |
+| Perfil | Login | Senha |
 |---|---|---|
-| Administrador | admin@urbanclin.com.br | admin123 |
-| Clínica | clinica@urbanclin.com.br | clinica123 |
-| Médico | medico@urbanclin.com.br | medico123 |
-| Empresa | empresa@horizonte.com.br | empresa123 |
+| Administrador | e-mail da consultoria (`ADMIN_EMAIL`, padrão urban.ambiental@hotmail.com) | senha inicial |
+| Empresa | **CNPJ ou CPF** da empresa (com ou sem pontuação) | senha inicial |
+| Clínica (demonstração) | clinica@urbanclin.com.br | clinica123 |
+| Médico (demonstração) | medico@urbanclin.com.br | medico123 |
 
-> Em produção: defina `SEED_DEMO=false` (cria só o administrador, com `ADMIN_EMAIL`/`ADMIN_SENHA`), troque `JWT_SECRET` e altere as senhas.
+**Senha inicial:** `urban1234` (variável `SENHA_INICIAL`). No primeiro acesso o sistema obriga a criar uma senha nova; até lá, nada além da troca de senha fica liberado.
+
+**Acesso das empresas:**
+- Toda empresa cadastrada (pela administração ou no agendamento) ganha login pelo CNPJ, ou pelo CPF quando o empregador é pessoa física.
+- Empresa cliente da consultoria no **eSocial Brasil** que ainda não está no sistema: no primeiro login com o CNPJ/CPF e a senha inicial, os dados dela são trazidos do eSocial e o acesso é criado.
+- **Sincronização diária às 00:00** (`ESOCIAL_SYNC_HORA`, horário de Brasília via `TZ=America/Sao_Paulo`): o sistema lê a lista de empresas do eSocial Brasil e grava **só as novas ou alteradas** (cada empresa guarda uma impressão digital dos dados; se nada mudou, nada é gravado). Empresa nova já ganha o acesso. Se o servidor estiver parado à meia-noite, roda assim que voltar. Em *Empresas* aparece a última sincronização e o botão *Sincronizar agora*.
+- Em *Empresas*, a coluna *Acesso* mostra se a empresa já criou a senha, e o botão *Redefinir senha* volta o acesso para a senha inicial.
+
+> Em produção: defina `SEED_DEMO=false`, troque `JWT_SECRET` e, se quiser, `SENHA_INICIAL`.
 
 Testes automatizados: `npm test`.
 

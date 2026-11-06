@@ -832,12 +832,12 @@ function colAsos(assinar) {
 /* Administração                                                        */
 /* ================================================================== */
 
-function crudPage({ titulo, endpoint, colunas, campos, novo = true, depoisCarregar }) {
+function crudPage({ titulo, endpoint, colunas, campos, novo = true, depoisCarregar, extraTopo }) {
   return async (main) => {
     const extras = depoisCarregar ? await depoisCarregar() : {};
     const lista = await api('GET', endpoint);
     const cs = typeof campos === 'function' ? campos(extras) : campos;
-    main.innerHTML = `<div class="acoes" style="justify-content:space-between;align-items:center"><h1>${esc(titulo)}</h1>${novo ? '<button class="btn primary" id="novo">+ Novo</button>' : ''}</div>
+    main.innerHTML = `<div class="acoes" style="justify-content:space-between;align-items:center"><h1>${esc(titulo)}</h1><div class="acoes">${extraTopo ? await extraTopo() : ''}${novo ? '<button class="btn primary" id="novo">+ Novo</button>' : ''}</div></div>
       <div class="card">${tabela(colunas.map(([r, fn]) => [r, (l) => fn(l, extras)]), lista, { onClick: (l) => abrir(l) })}</div>`;
     const abrir = (reg) => modal(reg ? `Editar — ${titulo}` : `Novo — ${titulo}`,
       `<div class="form">${cs.map((c) => campo({ ...c, val: reg ? (c.k === 'senha' ? '' : reg[c.k]) : c.padrao ?? '', req: c.req && !(reg && c.k === 'senha'), rot: reg && c.k === 'senha' ? 'Nova senha (deixe em branco para manter)' : c.rot })).join('')}</div>`, {
@@ -859,6 +859,14 @@ const ativoTag = (l) => (l.ativo ? '<span class="tag ok">Ativo</span>' : '<span 
 
 ROTAS.empresas = crudPage({
   titulo: 'Empresas', endpoint: '/admin/empresas',
+  extraTopo: async () => {
+    const s = await api('GET', '/admin/esocial/sincronizacao').catch(() => null);
+    if (!s || !s.configurado) return '';
+    const u = s.ultima;
+    const info = u ? `Última: ${new Date(u.em).toLocaleString('pt-BR')} · ${u.novas} nova(s), ${u.atualizadas} atualizada(s)` : 'Ainda não sincronizado';
+    return `<span class="small muted" title="Todo dia às ${esc(s.hora)} o sistema puxa do eSocial Brasil só as empresas novas ou alteradas">eSocial: ${esc(info)}</span>
+      <button class="btn" data-sync-esocial>Sincronizar agora</button>`;
+  },
   colunas: [['Razão social', (l) => esc(l.razao_social)], ['CNPJ / CPF', (l) => esc(fmtCNPJ(l.cnpj))], ['Responsável', (l) => esc(l.responsavel)], ['Contato', (l) => `${esc(l.telefone)}<div class="small muted">${esc(l.email)}</div>`], ['', ativoTag],
     ['Acesso', (l) => (l.acesso_login ? `${l.acesso_pendente ? '<span class="tag warn">Aguardando 1º acesso</span>' : '<span class="tag ok">Senha criada</span>'}<div class="small muted">login ${esc(fmtCNPJ(l.acesso_login))}</div>` : '<span class="tag neutro">—</span>')],
     ['', (l) => `<button class="btn" data-riscos="${l.id}">Riscos por função</button> <button class="btn" data-redefinir="${l.id}">Redefinir senha</button>`]],
@@ -910,6 +918,13 @@ async function modalRiscos(empresaId) {
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-riscos]');
   if (b) { e.stopPropagation(); modalRiscos(b.dataset.riscos).catch((err) => toast(err.message, 'erro')); }
+  const sy = e.target.closest('[data-sync-esocial]');
+  if (sy) {
+    sy.disabled = true; sy.textContent = 'Sincronizando…';
+    api('POST', '/admin/esocial/sincronizar')
+      .then((x) => { toast(`eSocial: ${x.recebidas} empresas lidas · ${x.novas} nova(s) · ${x.atualizadas} atualizada(s) · ${x.sem_mudanca} sem mudança`, 'ok'); render(); })
+      .catch((err) => { toast(err.message, 'erro'); sy.disabled = false; sy.textContent = 'Sincronizar agora'; });
+  }
   const r = e.target.closest('[data-redefinir]');
   if (r) {
     e.stopPropagation();

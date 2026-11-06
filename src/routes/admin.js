@@ -50,6 +50,18 @@ crud('empresas', 'empresas', ['cnpj', 'razao_social', 'responsavel', 'telefone',
   depoisCriar: (id) => require('../services').garantirAcessoEmpresa(id),
 });
 
+/* Sincronização com o eSocial Brasil: situação e execução manual */
+router.get('/esocial/sincronizacao', h((req, res) => {
+  const r = getConfig('esocial_sync_resultado', '');
+  res.json({ configurado: require('../esocial').configurado(), hora: process.env.ESOCIAL_SYNC_HORA || '00:00', ultima: r ? JSON.parse(r) : null });
+}));
+router.post('/esocial/sincronizar', h(async (req, res) => {
+  const r = await require('../scheduler').sincronizacaoDiaria({ forcar: true });
+  if (!r) throw httpError(409, 'Já existe uma sincronização em andamento');
+  if (r.pulado || r.erro) throw httpError(400, r.pulado || r.erro);
+  res.json(r);
+}));
+
 /* Acesso da empresa: volta para a senha inicial, com troca obrigatória */
 router.post('/empresas/:id/acesso/redefinir', h((req, res) => {
   const S = require('../services');

@@ -189,12 +189,15 @@ test('sincronização diária com o eSocial grava só empresas novas ou alterada
     { id: 901, cnpj: '11.444.777/0001-61', razao_social: 'Nova Empresa do eSocial Ltda', telefone: '(44) 3000-0000', email: 'nova@exemplo.com', responsavel: { nome: 'Maria' } },
     { id: 902, cnpj: hz.cnpj, razao_social: hz.razao_social, telefone: '(44) 99999-1111', email: hz.email, responsavel: { nome: hz.responsavel } },
     { id: 903, cnpj: '123', razao_social: 'Documento inválido' },
+    { id: 904, cnpj: '45.997.418/0001-53', razao_social: 'Empresa Bloqueada Ltda', ativo: true, bloqueado: true },
   ];
   es.configurado = () => true;
   es.todasEmpresas = async () => lista;
   try {
     const r1 = await sincronizacaoDiaria({ forcar: true });
-    assert.deepStrictEqual([r1.recebidas, r1.novas, r1.atualizadas, r1.ignoradas], [3, 1, 1, 1]);
+    assert.deepStrictEqual([r1.recebidas, r1.novas, r1.atualizadas, r1.ignoradas, r1.bloqueadas], [4, 1, 1, 1, 1]);
+    assert.ok(!db.prepare("SELECT 1 FROM empresas WHERE cnpj = '45997418000153'").get(), 'bloqueada não é cadastrada');
+    assert.strictEqual((await j('POST', '/auth/login', { login: '45997418000153', senha: 'urban1234' }))[0], 401);
     assert.strictEqual(db.prepare('SELECT telefone FROM empresas WHERE id = ?').get(hz.id).telefone, '(44) 99999-1111');
     // nada mudou no eSocial → nada é gravado
     const r2 = await sincronizacaoDiaria({ forcar: true });
@@ -205,6 +208,11 @@ test('sincronização diária com o eSocial grava só empresas novas ou alterada
     const [st, r] = await j('POST', '/auth/login', { login: '11444777000161', senha: 'urban1234' });
     assert.strictEqual(st, 200);
     assert.strictEqual(r.usuario.trocar_senha, true);
+    // bloqueada depois no eSocial: sem movimento aqui, é retirada (e o acesso some)
+    lista[0].bloqueado = true;
+    const r3 = await sincronizacaoDiaria({ forcar: true });
+    assert.strictEqual(r3.retiradas, 1);
+    assert.strictEqual((await j('POST', '/auth/login', { login: '11444777000161', senha: 'urban1234' }))[0], 401);
   } finally {
     Object.assign(es, original);
   }

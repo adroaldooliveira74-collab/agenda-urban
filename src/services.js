@@ -263,7 +263,7 @@ async function empresaDoEsocial(doc) {
   const esocial = require('./esocial');
   if (!esocial.configurado()) return null;
   const es = await esocial.empresaPorCnpj(doc);
-  if (!es) return null;
+  if (!es || es.bloqueado === true || es.ativo === false) return null; // só empresas liberadas
   const r = es.responsavel || {};
   const id = Number(db.prepare(
     `INSERT INTO empresas (cnpj, razao_social, responsavel, telefone, email, esocial_id) VALUES (?, ?, ?, ?, ?, ?)
@@ -313,9 +313,29 @@ function dadosEsocial(es) {
     responsavel: String(r.nome || '').trim(),
     telefone: String(es.telefone || r.celular || r.telefone || '').trim(),
     email: String(es.email || r.email || '').trim(),
+    liberada: es.ativo !== false && es.bloqueado !== true,
   };
-  d.hash = crypto.createHash('sha1').update(JSON.stringify([d.cnpj, d.razao_social, d.responsavel, d.telefone, d.email])).digest('hex');
+  d.hash = crypto.createHash('sha1').update(JSON.stringify([d.cnpj, d.razao_social, d.responsavel, d.telefone, d.email, d.liberada])).digest('hex');
   return d;
+}
+
+/** Empresa sem nenhum movimento aqui (pode ser retirada sem perder histórico). */
+const semMovimento = (empresaId) => !db.prepare(
+  `SELECT 1 FROM agendamentos WHERE empresa_id = ?1 UNION ALL SELECT 1 FROM funcionarios WHERE empresa_id = ?1
+   UNION ALL SELECT 1 FROM riscos_funcao WHERE empresa_id = ?1 LIMIT 1`,
+).get(empresaId);
+
+/** Empresa bloqueada no eSocial: retira se não tem movimento; senão desativa (com o acesso). */
+function tirarEmpresaBloqueada(local) {
+  if (semMovimento(local.id)) {
+    db.prepare('DELETE FROM usuarios WHERE empresa_id = ?').run(local.id);
+    db.prepare('DELETE FROM empresas WHERE id = ?').run(local.id);
+    return 'retirada';
+  }
+  if (!local.ativo) return null;
+  db.prepare('UPDATE empresas SET ativo = 0 WHERE id = ?').run(local.id);
+  db.prepare('UPDATE usuarios SET ativo = 0 WHERE empresa_id = ?').run(local.id);
+  return 'desativada';
 }
 
 /**
@@ -327,7 +347,7 @@ async function sincronizarEmpresasEsocial() {
   const esocial = require('./esocial');
   if (!esocial.configurado()) return { pulado: 'eSocial Brasil não configurado' };
   const lista = await esocial.todasEmpresas();
-  const res = { recebidas: lista.length, novas: 0, atualizadas: 0, sem_mudanca: 0, ignoradas: 0, repetidas: 0 };
+  const res = { recebidas: lista.length, novas: 0, atualizadas: 0, sem_mudanca: 0, bloqueadas: 0, retiradas: 0, desativadas: 0, ignoradas: 0, repetidas: 0 };
   const vistos = new Set();
   tx(() => {
     for (const es of lista) {
@@ -337,6 +357,19 @@ async function sincronizarEmpresasEsocial() {
       if (vistos.has(d.cnpj)) { res.repetidas++; continue; }
       vistos.add(d.cnpj);
       const local = db.prepare('SELECT * FROM empresas WHERE cnpj = ?').get(d.cnpj);
+      // Só as empresas liberadas no eSocial Brasil entram; bloqueadas ficam de fora
+      if (!d.liberada) {
+        res.bloqueadas++;
+        const acao = local && local.esocial_id ? tirarEmpresaBloqueada(local) : null;
+        if (acao === 'retirada') res.retiradas++;
+        if (acao === 'desativada') res.desativadas++;
+        continue;
+      }
+      if (local && !local.ativo && local.esocial_id) {
+        // voltou a ser liberada no eSocial
+        db.prepare('UPDATE empresas SET ativo = 1 WHERE id = ?').run(local.id);
+        db.prepare('UPDATE usuarios SET ativo = 1 WHERE empresa_id = ?').run(local.id);
+      }
       if (!local) {
         const id = Number(db.prepare(
           'INSERT INTO empresas (cnpj, razao_social, responsavel, telefone, email, esocial_id, esocial_hash) VALUES (?, ?, ?, ?, ?, ?, ?)',
